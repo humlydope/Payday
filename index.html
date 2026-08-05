@@ -122,6 +122,17 @@
   nav button .ic{font-size:17px;line-height:1}
   nav button.on{color:var(--teal)}
 
+  .hrow{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+  .info{width:32px;height:32px;flex:0 0 32px;border-radius:50%;
+    border:1px solid var(--line);color:var(--dim);font-family:var(--mono);
+    font-size:15px;font-weight:700;line-height:1;display:flex;align-items:center;
+    justify-content:center;background:var(--surface);}
+  .info:active{border-color:var(--teal);color:var(--teal);}
+  .help h4{margin:18px 0 6px;font-size:14.5px;color:var(--teal);}
+  .help h4:first-of-type{margin-top:6px}
+  .help p{margin:0 0 4px;font-size:13.5px;line-height:1.55;color:var(--text);}
+  .help p.sub{color:var(--dim);font-size:12.5px;}
+
   /* spending */
   .quick{background:var(--surface);border:1px solid var(--line);border-radius:16px;
     padding:15px 16px;margin:14px 0 18px;}
@@ -222,7 +233,10 @@
 <div class="wrap">
   <header>
     <div class="eyebrow" id="eyebrow">Week starts Monday</div>
-    <h1>Payday Ledger</h1>
+    <div class="hrow">
+      <h1>Payday Ledger</h1>
+      <button class="info" data-help="1" aria-label="What is this tab for?">i</button>
+    </div>
   </header>
   <main id="view"></main>
 </div>
@@ -239,7 +253,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="1.9";
+const VERSION="2.1";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -296,7 +310,8 @@ function nextFriday(){const t=new Date();const d=new Date(t.getFullYear(),t.getM
 function blank(){
   return {incomes:[],bills:[],debts:[],spend:[],
     settings:{weeks:12,floor:200,extraDebt:0,openingCash:0,strategy:"avalanche",
-      weekStart:1,cashUpdated:"",cur:"NZD",fx:{}},
+      weekStart:1,cashUpdated:"",cur:"NZD",fx:{},
+      parkMode:"auto",parkAmount:0,fundStart:0,aiKeys:{}},
     open:{}};
 }
 let D=blank(), tab="plan", ready=false;
@@ -333,9 +348,10 @@ function buildWeeks(){
     D.incomes.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
       ins.push({name:it.name,amount:+it.amount||0,date:d})));
     D.bills.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
-      outs.push({name:it.name,amount:+it.amount||0,date:d})));
+      outs.push({name:it.name,amount:+it.amount||0,date:d,lumpy:it.freq!=="weekly"})));
     D.debts.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
-      outs.push({name:it.name+" minimum",amount:+it.minPayment||0,date:d,debt:1})));
+      outs.push({name:it.name+" minimum",amount:+it.minPayment||0,date:d,debt:1,
+        lumpy:it.freq!=="weekly"})));
     const extra=+S.extraDebt||0;
     if(extra>0&&D.debts.length&&!part) outs.push({name:"Extra off debt",amount:extra,date:from,debt:1});
     outs.sort((a,b)=>a.date-b.date);
@@ -406,12 +422,14 @@ function viewPlan(){
     +'<div class="handnote">Bank plus cash in your pocket. Everything below is counted from '
     +'this number. <b>'+ago+'</b></div></div>';
 
+  const FP=fundPlan();
   h+='<div class="stats">'
     +statTile("Income / week",money(sm.income),"","averaged over the cycle")
-    +statTile("Park each week",money(sm.billsLumpy),"sand","for the bills that aren't weekly")
+    +statTile("Park each week",money(FP.P),"sand",
+        FP.possible?"safe range "+money(FP.minP)+"–"+money(FP.maxP):"no safe amount yet")
     +statTile("Free to spend",money(sm.free),sm.free<0?"rose":"teal","after every commitment")
-    +statTile("Lowest point",money(low.closing||0),(low.closing||0)<(+S.floor)?"rose":"",
-        low.from?"week of "+sDate(low.from):"")
+    +statTile("Lowest point",money(FP.worstSpend),(FP.worstSpend)<(+S.floor)?"rose":"",
+        "spending money, not counting the pot")
     +'</div>';
 
   if(!D.incomes.length && !D.bills.length && !D.debts.length){
@@ -445,6 +463,10 @@ function viewPlan(){
     +'Check for update</button></div>'
     +'</details>';
 
+  h+=viewFundCard();
+  h+='<button class="ghost" data-ai="1" style="margin:0 0 16px;color:var(--teal);'
+    +'border-color:var(--teal)">Ask an AI about these numbers</button>';
+
   if(sm.free<0) h+='<div class="empty" style="border-color:var(--rose);color:var(--rose);text-align:left">'
     +'Your commitments run '+money(-sm.free)+' a week ahead of your income. Something has to move '
     +'before the buffer runs out.</div>';
@@ -471,9 +493,10 @@ function viewPlan(){
       if(!w.outs.length) h+='<div class="ln"><span class="nm dim">Nothing due</span></div>';
       w.outs.forEach(x=>h+=line(x.name,x.date,x.amount,x.debt?"sand":"","−"));
       const sm2=smoothed();
-      h+='<div class="action">Pay the bills above, move <b>'+money(sm2.billsLumpy)
-        +'</b> into your set-aside account, then <b>'+money(Math.max(0,w.closing-(+S.floor)))
-        +'</b> is yours to spend this week.</div>';
+      const fr=FP.rows[i]||{fund:0,spend:w.closing};
+      h+='<div class="action">Pay the bills above, move <b>'+cash(FP.P)
+        +'</b> into your set-aside account (pot then holds <b>'+cash(fr.fund)+'</b>), then <b>'
+        +cash(Math.max(0,fr.spend-(+S.floor)))+'</b> is yours to spend this week.</div>';
       if(lowW) h+='<div class="warn">▲ Below your '+money(+S.floor)
         +' floor. Move a bill or hold back spending the week before.</div>';
       h+='</div>';
@@ -640,6 +663,78 @@ const activeRate=()=>{
 function foreign(n,c){
   const v=Math.abs(n);
   return curSym(c)+(v%1?v.toFixed(2):Math.round(v).toLocaleString("en-NZ"));
+}
+
+/* ── set-aside fund ──────────────────────────────────────
+   Parked money is still your cash, just spoken for. So the honest
+   "safe to spend" figure is closing balance minus the pot.
+   Two constraints bound how much you can park each week:
+     the pot must never go negative when a lumpy bill lands
+     what's left outside the pot must never fall below your floor  */
+function autoPark(){ return smoothed().billsLumpy + smoothed().debtMin; }
+function parkAmount(){
+  const S=D.settings;
+  return S.parkMode==="manual" ? (+S.parkAmount||0) : autoPark();
+}
+function fundPlan(){
+  const W=buildWeeks(), S=D.settings;
+  const fund0=+S.fundStart||0, floor=+S.floor||0, P=parkAmount();
+  let cum=0, n=0, minP=0, maxP=Infinity, worstFund=Infinity, worstSpend=Infinity;
+  const rows=W.map(w=>{
+    if(!w.part) n++;
+    cum += w.outs.filter(o=>o.lumpy).reduce((a,b)=>a+b.amount,0);
+    const fund=fund0+P*n-cum;
+    const spend=w.closing-fund;
+    if(fund<worstFund) worstFund=fund;
+    if(spend<worstSpend) worstSpend=spend;
+    if(n>0){
+      minP=Math.max(minP,(cum-fund0)/n);
+      maxP=Math.min(maxP,(w.closing-fund0+cum-floor)/n);
+    }
+    return {w, fund, spend, contribs:n};
+  });
+  minP=Math.max(0,minP);
+  return {rows, P, minP, maxP, fund0, worstFund, worstSpend,
+    possible:minP<=maxP, auto:autoPark()};
+}
+function viewFundCard(){
+  const S=D.settings, f=fundPlan(), manual=S.parkMode==="manual";
+  let h='<div class="hand" style="border-color:var(--sand)">'
+    +'<div class="lbl">Park each week</div>'
+    +'<div class="handrow"><span class="cur">$</span>'
+    +(manual
+      ? '<input type="number" inputmode="decimal" data-set="parkAmount" value="'+(+S.parkAmount||0)+'" style="color:var(--sand)">'
+      : '<input type="number" value="'+Math.round(f.auto)+'" disabled style="color:var(--sand)">')
+    +'</div>'
+    +'<div class="seg" style="margin:6px 0 10px">'
+    +'<button class="'+(manual?"":"on")+'" data-park="auto">Work it out for me</button>'
+    +'<button class="'+(manual?"on":"")+'" data-park="manual">I\'ll set it</button>'
+    +'</div>';
+
+  if(f.possible){
+    h+='<div class="handnote">Anything from <b>'+cash(f.minP)+'</b> to <b>'+cash(f.maxP)
+      +'</b> a week works. Below that and the pot runs dry before a bill lands. Above it and '
+      +'your spending money drops under the '+money(+S.floor)+' floor.</div>'
+      +'<div class="seg" style="margin-top:10px">'
+      +'<button data-setpark="'+f.minP.toFixed(2)+'">Lowest safe</button>'
+      +'<button data-setpark="'+f.auto.toFixed(2)+'">True cost</button>'
+      +(isFinite(f.maxP)?'<button data-setpark="'+f.maxP.toFixed(2)+'">Highest safe</button>':'')
+      +'</div>';
+  } else {
+    h+='<div class="handnote" style="color:var(--rose)">No amount works right now. The bills '
+      +'need <b>'+cash(f.minP)+'</b> a week but your buffer only allows <b>'+cash(Math.max(0,f.maxP))
+      +'</b>. You\'re short about '+cash(f.minP-f.maxP)+' a week — cut spending, move a bill, '
+      +'or start the pot with more in it.</div>';
+  }
+
+  h+='<div class="setrow" style="margin-top:10px"><label>Already set aside</label>'
+    +'<input type="number" inputmode="decimal" data-set="fundStart" value="'+(+S.fundStart||0)+'"></div>';
+
+  if(f.worstFund<-0.5)
+    h+='<div class="warn">▲ The pot goes '+cash(-f.worstFund)+' short at its worst. '
+      +'Raise the weekly amount or put more in to start.</div>';
+
+  return h+'</div>';
 }
 
 /* ── spending ── */
@@ -961,6 +1056,200 @@ document.addEventListener("input",e=>{
   if(e.target.dataset.sp==="amount" || e.target.dataset.rate!==undefined) updateFxHint();
 });
 
+/* ── AI adviser ──────────────────────────────────────────
+   Two routes. Free: copy a briefing and paste it into your normal
+   Claude or Gemini account. Paid: paste an API key and chat in here. */
+let AI={provider:"claude", msgs:[], busy:false, q:"", err:""};
+const AI_SITES={claude:"https://claude.ai/new", gemini:"https://gemini.google.com/app"};
+const AI_KEYS={claude:"https://console.anthropic.com/settings/keys",
+               gemini:"https://aistudio.google.com/apikey"};
+
+function briefing(){
+  const S=D.settings, F=fundPlan(), sm=smoothed();
+  const line=i=>i.name+" "+cash(+i.amount||0)+" "+FLBL[i.freq].toLowerCase()
+    +" (next "+(parseISO(i.anchor)?sDate(parseISO(i.anchor)):"?")+")";
+  let t="Here is my household cash flow. All figures NZD.\n\n";
+  t+="Cash on hand: "+cash(+S.openingCash||0)+"\n";
+  t+="Safety floor I never want to go below: "+cash(+S.floor||0)+"\n";
+  t+="Already set aside in the pot: "+cash(+S.fundStart||0)+"\n";
+  t+="Currently parking "+cash(F.P)+" a week for non-weekly bills.\n";
+  t+="Weeks run "+["Sunday","Monday","","","","Friday","Saturday"][+S.weekStart||1]+" to "
+    +["Saturday","Sunday","","","","Thursday","Friday"][+S.weekStart||1]+".\n\n";
+  t+="INCOME\n"+(D.incomes.map(line).join("\n")||"none")+"\n\n";
+  t+="BILLS\n"+(D.bills.map(line).join("\n")||"none")+"\n\n";
+  t+="DEBTS\n"+(D.debts.map(d=>d.name+" owing "+cash(+d.balance||0)+" at "+(+d.apr||0)
+    +"% p.a., minimum "+cash(+d.minPayment||0)+" "+FLBL[d.freq].toLowerCase()).join("\n")||"none")+"\n\n";
+  t+="WEEK BY WEEK (start / in / out / closing cash / pot / spendable outside pot)\n";
+  F.rows.forEach(r=>{
+    t+=weekName(r.w)+" | in "+cash(r.w.totalIn)+" | out "+cash(r.w.totalOut)
+      +" | closing "+cash(r.w.closing)+" | pot "+cash(r.fund)+" | spendable "+cash(r.spend)+"\n";
+  });
+  t+="\nLowest spendable point across the period: "+cash(F.worstSpend)+"\n";
+  t+="Lowest the pot gets: "+cash(F.worstFund)+"\n";
+  t+="Arithmetic safe range for the weekly park amount: "
+    +cash(F.minP)+" to "+(isFinite(F.maxP)?cash(F.maxP):"unbounded")+"\n";
+  const sp=spendIn("month");
+  if(sp.length){
+    t+="\nLOGGED SPENDING, LAST 30 DAYS\n";
+    byCat(sp).forEach(c=>{ t+=c.cat+": "+cash(c.amt)+"\n"; });
+  }
+  t+="\nYou are helping me plan. Be specific and use my actual numbers. "
+    +"Point out anything that looks wrong or risky. Do not give regulated financial advice.\n";
+  return t;
+}
+
+function aiSheet(){
+  const S=D.settings, keys=S.aiKeys||{}, key=keys[AI.provider]||"";
+  let h='<div class="grab"></div><h3>Ask an AI</h3>'
+    +'<div class="seg" style="margin-top:0">'
+    +'<button class="'+(AI.provider==="claude"?"on":"")+'" data-aiprov="claude">Claude</button>'
+    +'<button class="'+(AI.provider==="gemini"?"on":"")+'" data-aiprov="gemini">Gemini</button>'
+    +'</div>'
+    +'<div class="fl" style="margin-top:14px"><label>What do you want to ask?</label>'
+    +'<textarea data-aiq style="width:100%;height:78px;background:var(--surface2);'
+    +'border:1px solid var(--line);border-radius:10px;padding:10px;color:var(--text);'
+    +'font-family:var(--sans);font-size:14px" placeholder="'
+    +'What is the fastest way to get my lowest point above my floor?">'+esc(AI.q)+'</textarea></div>'
+    +'<div class="chips" style="margin-bottom:14px">'
+    +['What is the fastest way to get my lowest point safely above my floor?',
+      'How much can I park each week without dipping under my floor?',
+      'Which bill should I move to a different week and why?',
+      'Where should I cut first based on my spending?']
+      .map(q=>'<button class="chip" data-aipreset="'+esc(q)+'">'+esc(q.slice(0,28))+'…</button>').join("")
+    +'</div>'
+    +'<button class="btn save" data-aicopy="1" style="width:100%">Copy my numbers and open '
+    +(AI.provider==="claude"?"Claude":"Gemini")+'</button>'
+    +'<p class="note" style="margin-top:8px">Free — pastes into the account you already have. '
+    +'Your numbers leave the phone only when you send them.</p>';
+
+  h+='<details class="setup" style="margin-top:16px"'+(key?" open":"")+'>'
+    +'<summary>Or chat right here (needs an API key)</summary>'
+    +'<div class="fl" style="padding:12px 0 0"><label>'+AI.provider+' API key</label>'
+    +'<input type="password" data-aikey value="'+esc(key)+'" placeholder="paste key"></div>'
+    +'<p class="note">Stored on this phone only. Costs a few cents a message, billed to you. '
+    +'Get one at '+AI_KEYS[AI.provider]+'</p>'
+    +(key?'<button class="btn save" data-aisend="1" style="width:100%;margin:12px 0">'
+      +(AI.busy?"Thinking…":"Send")+'</button>':'')
+    +'</details>';
+
+  if(AI.err) h+='<div class="result bad" style="margin-top:12px">'+esc(AI.err)+'</div>';
+  AI.msgs.forEach(m=>{
+    h+='<div class="'+(m.role==="user"?"ent":"cut")+'" style="margin-top:10px;display:block">'
+      +'<div class="lbl" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;'
+      +'color:var(--dim);text-transform:uppercase;margin-bottom:6px">'
+      +(m.role==="user"?"You":AI.provider)+'</div>'
+      +esc(m.text).replace(/\n/g,"<br>")+'</div>';
+  });
+  return h;
+}
+function openAI(){
+  const sh=document.getElementById("sheet");
+  sh.innerHTML=aiSheet();
+  sh.classList.add("on"); document.getElementById("bd").classList.add("on");
+}
+function readAI(){
+  const t=document.querySelector("[data-aiq]"); if(t) AI.q=t.value;
+  const k=document.querySelector("[data-aikey]");
+  if(k){ if(!D.settings.aiKeys) D.settings.aiKeys={};
+    D.settings.aiKeys[AI.provider]=k.value.trim(); }
+}
+async function sendAI(){
+  readAI();
+  const key=(D.settings.aiKeys||{})[AI.provider]||"";
+  if(!key){ AI.err="Paste an API key first."; openAI(); return; }
+  if(!AI.q.trim()){ AI.err="Type a question first."; openAI(); return; }
+  AI.err=""; AI.busy=true;
+  const first=AI.msgs.length===0;
+  const text=(first?briefing()+"\n":"")+AI.q.trim();
+  AI.msgs.push({role:"user",text:AI.q.trim()});
+  AI.q=""; save(); openAI();
+  try{
+    let out="";
+    if(AI.provider==="claude"){
+      const hist=AI.msgs.map((m,i)=>({role:m.role==="user"?"user":"assistant",
+        content:(i===0?briefing()+"\n":"")+m.text}));
+      hist[hist.length-1].content=text;
+      const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",
+        headers:{"content-type":"application/json","x-api-key":key,
+          "anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+        body:JSON.stringify({model:"claude-sonnet-5",max_tokens:1200,messages:hist})});
+      const d=await r.json();
+      if(d.error) throw new Error(d.error.message||"API error");
+      out=(d.content||[]).filter(x=>x.type==="text").map(x=>x.text).join("\n");
+    } else {
+      const r=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"
+        +"gemini-2.5-flash:generateContent?key="+encodeURIComponent(key),
+        {method:"POST",headers:{"content-type":"application/json"},
+         body:JSON.stringify({contents:[{role:"user",parts:[{text:text}]}]})});
+      const d=await r.json();
+      if(d.error) throw new Error(d.error.message||"API error");
+      const c=(d.candidates||[])[0];
+      out=(((c||{}).content||{}).parts||[]).map(p=>p.text).join("\n");
+    }
+    AI.msgs.push({role:"ai",text:out||"(empty reply)"});
+  }catch(e){
+    AI.err=(e&&e.message)?e.message:"Couldn't reach the API.";
+    AI.msgs.pop();
+  }
+  AI.busy=false; openAI();
+}
+
+/* ── help ── */
+const HELP={
+plan:["Weekly plan","This is the whole point of the app: what lands, what leaves, and what's left, week by week.",[
+["Money I have right now","Your bank balance plus cash in your pocket. Every figure below is counted from this one, so a stale number here makes everything else wrong. Update it whenever you check your bank."],
+["Safety floor","The lowest you're willing to let your spending money get. Not zero — leave room for a surprise. Anything that would push you under it turns red."],
+["Income / week","Your pay averaged across the whole cycle. If you're paid fortnightly, this is roughly half of each payday, so you can compare it against weekly costs."],
+["Park each week","Bills that don't come weekly — rates, insurance, rego — still cost you every week. This is what to move into a separate account so the money's there when they land."],
+["Free to spend","What's genuinely yours after every bill, every debt minimum, and the parking. Spend this without breaking anything."],
+["Lowest point","The tightest your spending money gets over the weeks shown. This ignores the parked pot, because that money is already promised. If this is red, trouble is coming and you can see it early."],
+["Pay week and off week","A thick teal bar means pay lands that week. A thin bar means it doesn't. An amber bar is the part-week you're standing in right now."],
+["Already set aside","How much is in the pot today. If you've been saving toward the rates bill already, put it here so the app doesn't tell you to start from nothing."]]],
+
+spend:["Spending","Log what you spend day to day. It comes straight off your balance so the plan stays honest without you re-typing anything.",[
+["What to log","Only things that aren't already listed as a bill. Fixed costs like power and insurance belong on the Bills tab. Log the flexible stuff — food, petrol, takeaways — because that's the only kind you can actually cut."],
+["Categories","Tap one before adding. They drive the chart, so be consistent rather than precise."],
+["Currency","Travelling? Pick the currency, enter how many units one NZD buys, and type prices as you see them. It converts and stores NZD so everything else still makes sense."],
+["The donut","Where your money went, biggest slice first. Switch between this week, the last 30 days, and everything."],
+["Where the money is going","Turns your logging into a weekly rate and compares it to what your plan says is free. If you're over, it names your three biggest categories and shows what trimming each by a quarter is worth per week and per year."],
+["Removing an entry","Tap the × and the money goes back on your balance."]]],
+
+money:["Income and bills","Everything that comes in and goes out on a schedule. Get this right once and the rest of the app works.",[
+["How often","Weekly, fortnightly, monthly, quarterly, yearly or one-off. Getting this right matters more than the exact amount — a quarterly rates bill behaves very differently to a monthly one."],
+["Next date","The next time it actually lands or is due. Check a bank statement rather than guessing; everything is calculated forward from this date."],
+["Don't forget the yearly ones","Rates, insurance, car rego, WOF, subscriptions. These are what catch people out, and they're exactly what the parking figure is for."],
+["Groceries and petrol","Either put them here as a weekly amount, or log them on the Spending tab. One or the other, never both, or you'll count them twice."],
+["Clear everything","Wipes every income, bill, debt and spending entry on this phone. It asks first. Back up before you do it."]]],
+
+debt:["Debt","What you owe, and how fast it disappears.",[
+["Balance and rate","The rate is on your statement, usually as an annual percentage. Credit cards in New Zealand often sit near 20%, which is why paying them down usually beats saving."],
+["Minimum payment","What you're required to pay, and how often. This gets scheduled into your weekly plan automatically."],
+["Extra per week","Anything above the minimums. This is the lever — change it and watch the debt-free date move."],
+["Highest interest first","Pays the most expensive debt first. Costs you the least overall."],
+["Smallest balance first","Clears whole debts sooner. Costs a little more in interest, but some people stick with it better because it feels like progress."],
+["Debt free date","Assumes you keep paying and add nothing new to the balance. Treat it as close, not exact."]]],
+
+fit:["Fit it in","Something unplanned came up. This finds the best week to pay it without wrecking the plan.",[
+["Why it isn't obvious","Paying $600 in three weeks doesn't only affect that week. It drags every week after it down by $600 too, because that money never rolls forward. This checks all of them."],
+["Needed by","A deadline. Weeks past it are greyed out so you don't pick one that's too late."],
+["Pay it over","Spreading a cost over several weeks often turns an impossible payment into an easy one. Try it before giving up on something."],
+["The colours","Green fits above your floor. Amber dips under but stays positive. Red goes negative — don't."],
+["Add it to my plan","Writes it into your weekly ledger as real payments, so the same money doesn't get promised twice."]]]
+};
+function openHelp(){
+  const H=HELP[tab]||HELP.plan;
+  let h='<div class="grab"></div><h3>'+H[0]+'</h3>'
+    +'<p class="sec-note" style="margin-bottom:4px">'+H[1]+'</p><div class="help">';
+  H[2].forEach(x=>{ h+='<h4>'+x[0]+'</h4><p>'+x[1]+'</p>'; });
+  h+='</div><p class="note" style="margin-top:18px">Everything you type stays on this phone. '
+    +'Nothing is sent anywhere unless you use the AI button or Back up.</p>'
+    +'<div class="sheet-actions"><button class="btn save" data-act="close">Got it</button></div>';
+  const sh=document.getElementById("sheet");
+  sh.innerHTML=h;
+  sh.scrollTop=0;
+  sh.classList.add("on"); document.getElementById("bd").classList.add("on");
+}
+
 /* ── events ── */
 document.addEventListener("click",e=>{
   const nav=e.target.closest("nav button");
@@ -986,6 +1275,7 @@ document.addEventListener("click",e=>{
   if(act){
     tap();
     if(act.dataset.act==="save") commit();
+    else if(act.dataset.act==="close") closeSheet();
     else if(act.dataset.act==="delete"){
       const key=editing.kind==="income"?"incomes":editing.kind==="bill"?"bills":"debts";
       D[key]=D[key].filter(x=>x.id!==editing.item.id); save(); closeSheet(); render();
@@ -1012,6 +1302,31 @@ document.addEventListener("click",e=>{
     }
     return;
   }
+  if(e.target.closest("[data-help]")){ tap(); openHelp(); return; }
+  const pk2=e.target.closest("[data-park]");
+  if(pk2){ tap();
+    D.settings.parkMode=pk2.dataset.park;
+    if(pk2.dataset.park==="manual" && !D.settings.parkAmount)
+      D.settings.parkAmount=Math.round(autoPark());
+    save(); render(); return; }
+  const sp2=e.target.closest("[data-setpark]");
+  if(sp2){ tap();
+    D.settings.parkMode="manual";
+    D.settings.parkAmount=Math.round(Number(sp2.dataset.setpark)*100)/100;
+    save(); render(); return; }
+  if(e.target.closest("[data-ai]")){ tap(); AI.err=""; openAI(); return; }
+  const ap=e.target.closest("[data-aiprov]");
+  if(ap){ tap(); readAI(); AI.provider=ap.dataset.aiprov; AI.msgs=[]; AI.err=""; save(); openAI(); return; }
+  const apr=e.target.closest("[data-aipreset]");
+  if(apr){ tap(); AI.q=apr.dataset.aipreset; openAI(); return; }
+  if(e.target.closest("[data-aicopy]")){
+    tap(); readAI(); save();
+    const payload=briefing()+"\nMY QUESTION: "+(AI.q.trim()||"What should I change first?");
+    try{ navigator.clipboard.writeText(payload); }catch(err){}
+    window.open(AI_SITES[AI.provider],"_blank");
+    return;
+  }
+  if(e.target.closest("[data-aisend]")){ tap(); sendAI(); return; }
   const gt=e.target.closest("[data-goto]");
   if(gt){ tap(); tab=gt.dataset.goto; render(true); return; }
   const chip=e.target.closest("[data-cat]");
@@ -1092,6 +1407,7 @@ document.addEventListener("change",e=>{
       : (k==="weeks" ? Math.max(1,Math.min(52,Number(s.value)||12)) : (Number(s.value)||0));
     if(k==="openingCash") D.settings.cashUpdated=toISO(new Date());
     if(k==="cur") D.settings.cur=s.value;
+    if(k==="parkAmount") D.settings.parkMode="manual";
     save(); render(); }
 });
 document.addEventListener("toggle",e=>{
