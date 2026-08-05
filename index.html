@@ -239,7 +239,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="1.8";
+const VERSION="1.9";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -898,14 +898,36 @@ function readFit(){
 }
 
 function backup(){
+  const json=JSON.stringify(D,null,2);
+  const name="payday-backup-"+toISO(new Date())+".json";
+  /* iOS: the share sheet is the reliable route out of a home-screen app */
   try{
-    const blob=new Blob([JSON.stringify(D,null,2)],{type:"application/json"});
+    const file=new File([json],name,{type:"application/json"});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      navigator.share({files:[file],title:"Payday backup"}).catch(()=>{});
+      return;
+    }
+  }catch(e){}
+  try{
+    const blob=new Blob([json],{type:"application/json"});
     const a=document.createElement("a");
     a.href=URL.createObjectURL(blob);
-    a.download="payday-backup-"+toISO(new Date())+".json";
+    a.download=name;
     document.body.appendChild(a); a.click();
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500);
-  }catch(e){ alert("Couldn't save the backup file."); }
+  }catch(e){ showBackupText(json); }
+}
+function showBackupText(json){
+  const sh=document.getElementById("sheet");
+  sh.innerHTML='<div class="grab"></div><h3>Copy your backup</h3>'
+    +'<p class="sec-note">Saving a file didn\'t work on this device. Copy this text and '
+    +'keep it somewhere safe — an email to yourself works. Paste it back with Restore.</p>'
+    +'<textarea id="bkText" readonly style="width:100%;height:180px;background:var(--surface2);'
+    +'border:1px solid var(--line);border-radius:10px;padding:10px;color:var(--text);'
+    +'font-family:var(--mono);font-size:11px"></textarea>'
+    +'<div class="sheet-actions"><button class="btn save" data-bkcopy="1">Copy</button></div>';
+  const t=document.getElementById("bkText"); if(t) t.value=json;
+  sh.classList.add("on"); document.getElementById("bd").classList.add("on");
 }
 function restore(file){
   const r=new FileReader();
@@ -1022,6 +1044,15 @@ document.addEventListener("click",e=>{
       D.spend=D.spend.filter(x=>x.id!==id);
       D.settings.openingCash=(+D.settings.openingCash||0)+(+it.amount||0);
       save(); render();
+    }
+    return;
+  }
+  if(e.target.closest("[data-bkcopy]")){
+    tap();
+    const t=document.getElementById("bkText");
+    if(t){ t.select(); t.setSelectionRange(0,999999);
+      try{ navigator.clipboard.writeText(t.value); }catch(err){ try{ document.execCommand("copy"); }catch(e2){} }
+      alert("Copied. Paste it somewhere safe.");
     }
     return;
   }
