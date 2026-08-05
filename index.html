@@ -252,14 +252,14 @@
   <button data-tab="spend"><span class="ic">◉</span>Spending</button>
   <button data-tab="money"><span class="ic">◈</span>Bills</button>
   <button data-tab="debt"><span class="ic">◔</span>Debt</button>
-  <button data-tab="fit"><span class="ic">＋</span>Fit in</button>
+  <button data-tab="fit"><span class="ic">◇</span>Ahead</button>
 </div></nav>
 
 <div class="backdrop" id="bd"></div>
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="2.6";
+const VERSION="2.8";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -586,7 +586,7 @@ function viewDebt(){
 }
 
 /* ── fit it in: where does an unplanned payment land ── */
-let F={name:"",amount:0,by:"",split:1,scanned:false,pick:null};
+let F={name:"",amount:0,by:"",split:1,scanned:false,pick:null,mode:"save"};
 
 function fitScan(){
   const W=buildWeeks(), floor=+D.settings.floor||0;
@@ -608,17 +608,86 @@ function fitBest(rows){
       || rows.find(r=>!r.late&&r.status==="tight")
       || null;
 }
+function goalList(){
+  const t=new Date(), today=new Date(t.getFullYear(),t.getMonth(),t.getDate());
+  return D.bills.filter(b=>b.freq==="once" && parseISO(b.anchor) && parseISO(b.anchor)>today)
+    .map(b=>{
+      const d=parseISO(b.anchor);
+      const wks=Math.max(1,Math.floor((d-today)/(7*86400000)));
+      return {b, due:d, wks, per:(+b.amount||0)/wks};
+    })
+    .sort((a,b)=>a.due-b.due);
+}
 function viewFit(){
-  const S=D.settings, n=Math.max(1,+F.split||1), amt=+F.amount||0;
-  let h='<div class="sec-h"><h2>Something unplanned?</h2></div>'
-    +'<p class="sec-note">A purchase, a bill you forgot, a repair. Put it in here and the app '
-    +'finds the first week you can pay it without breaking your '+money(+S.floor)+' floor.</p>';
+  const S=D.settings, mode=F.mode||"save";
+  let h='<div class="seg" style="margin-top:6px">'
+    +'<button class="'+(mode==="save"?"on":"")+'" data-fitmode="save">Saving for a date</button>'
+    +'<button class="'+(mode==="now"?"on":"")+'" data-fitmode="now">Need to pay it now</button>'
+    +'</div>';
+
+  if(mode==="save"){
+    h+='<div class="sec-h"><h2>Something coming up</h2></div>'
+      +'<p class="sec-note">A trip, a car service, school fees, a tax bill. Tell it what and when, '
+      +'and it works out what to put aside each week so the money is there on the day — not before.</p>'
+      +'<div class="fl"><label>What is it</label>'
+      +'<input type="text" data-fit="name" value="'+esc(F.name)+'" placeholder="Japan trip"></div>'
+      +'<div class="two"><div class="fl"><label>How much</label>'
+      +'<input type="number" inputmode="decimal" data-fit="amount" value="'+((+F.amount)||"")+'" placeholder="0"></div>'
+      +'<div class="fl"><label>Needed by</label>'
+      +'<input type="date" data-fit="by" value="'+esc(F.by)+'"></div></div>'
+      +'<button class="btn save" data-fitplan="1" style="width:100%">Work out the weekly amount</button>';
+
+    const amt=+F.amount||0, by=parseISO(F.by);
+    if(F.scanned && amt>0 && by){
+      const t=new Date(), today=new Date(t.getFullYear(),t.getMonth(),t.getDate());
+      const wks=Math.floor((by-today)/(7*86400000));
+      if(wks<2){
+        h+='<div class="result bad" style="margin-top:16px"><span class="big">That is very close</span>'
+          +'Under two weeks away, so there is nothing to save into. Switch to '
+          +'<b>Need to pay it now</b> and it will find the best week.</div>';
+      } else {
+        const per=amt/wks;
+        h+='<div class="result" style="margin-top:16px">'
+          +'<span class="big">'+cash(per)+' a week</span>'
+          +lDate(by)+' is <b>'+wks+' weeks</b> away. Put that aside each week and it is covered '
+          +'on the day, with nothing going red and nothing paid early.'
+          +'</div>'
+          +'<button class="btn save" data-fitsave="1" style="width:100%;margin-top:12px">'
+          +'Add this to my plan</button>'
+          +'<p class="note">Adds it as a payment on '+sDate(by)+' and raises your weekly park '
+          +'amount to cover it. Your money stays yours until it is actually owed.</p>';
+      }
+    }
+
+    const goals=goalList();
+    if(goals.length){
+      h+='<div class="sec-h" style="margin-top:26px"><h2>What you are saving for</h2></div>'
+        +'<p class="legend">Each of these is already in your plan. The weekly figure is that '
+        +'goal\'s share of what you park.</p>';
+      goals.forEach(g=>{
+        h+='<div class="ent"><span class="swatch" style="background:var(--sand)"></span>'
+          +'<span class="eb"><b>'+esc(g.b.name||"Untitled")+'</b>'
+          +'<span>'+lDate(g.due)+' · '+g.wks+' weeks away · '+cash(g.per)+' a week</span></span>'
+          +'<span class="ea">'+cash(+g.b.amount||0)+'</span>'
+          +'<button class="x" data-goaldel="'+g.b.id+'" title="Remove">×</button></div>';
+      });
+      const tot=goals.reduce((a,b)=>a+b.per,0);
+      h+='<p class="note">Together they need <b>'+cash(tot)+' a week</b> set aside.</p>';
+    }
+    return h;
+  }
+
+  /* ── pay it now ── */
+  const n=Math.max(1,+F.split||1), amt=+F.amount||0;
+  h+='<div class="sec-h"><h2>Something unplanned?</h2></div>'
+    +'<p class="sec-note">A repair, a bill you forgot, something that cannot wait. This finds the '
+    +'first week you can pay it without breaking your '+money(+S.floor)+' floor.</p>';
 
   h+='<div class="fl"><label>What is it</label>'
-    +'<input type="text" data-fit="name" value="'+esc(F.name)+'" placeholder="Fridge / overdue rego"></div>'
+    +'<input type="text" data-fit="name" value="'+esc(F.name)+'" placeholder="Car repair"></div>'
     +'<div class="two"><div class="fl"><label>Amount</label>'
     +'<input type="number" inputmode="decimal" data-fit="amount" value="'+(amt||"")+'" placeholder="0"></div>'
-    +'<div class="fl"><label>Needed by</label>'
+    +'<div class="fl"><label>Latest it can wait</label>'
     +'<input type="date" data-fit="by" value="'+esc(F.by)+'"></div></div>'
     +'<div class="fl"><label>Pay it over</label><select data-fit="split">'
     +[1,2,3,4,6,8,12].map(k=>'<option value="'+k+'"'+(n===k?" selected":"")+'>'
@@ -633,25 +702,22 @@ function viewFit(){
 
   if(best){
     const r=rows[F.pick!==null?F.pick:best.i];
-    h+='<div class="result'+(r.status==="ok"?"":" bad")+'">'
+    h+='<div class="result'+(r.status==="ok"?"":" bad")+'" style="margin-top:16px">'
       +'<span class="big">'+(r.part?"Pay it now":"Start "+r.label)+'</span>'
-      +(n>1?'Pay '+money(per)+' a week for '+n+' weeks, last one '+sDate(r.last)+'. ':
-             'Pay the whole '+money(amt)+' that week. ')
-      +'Your buffer bottoms out at <b>'+money(r.worst)+'</b>'
+      +(n>1?'Pay '+cash(per)+' a week for '+n+' weeks, last one '+sDate(r.last)+'. ':
+             'Pay the whole '+cash(amt)+' that week. ')
+      +'Your buffer bottoms out at <b>'+cash(r.worst)+'</b>'
       +(r.status==="ok" ? ', still above your floor.' :
         r.status==="tight" ? ', which dips under your floor but stays positive.' :
-        ', which goes negative. Don\'t do it this week.')
+        ', which goes negative. Do not do it this week.')
       +'</div>';
-    if(best.i>0 && F.pick===best.i)
-      h+='<p class="legend">Paying it any earlier than this breaks the plan. '
-        +'Tap another week below to test it.</p>';
   } else {
     const bestAny=rows.reduce((a,b)=>b.worst>a.worst?b:a,rows[0]);
     const short=floor-bestAny.worst;
-    h+='<div class="result bad"><span class="big">It doesn\'t fit yet</span>'
-      +'Even the best week ('+sDate(bestAny.from)+') leaves you '+money(short)
-      +' short of your floor. Options: spread it over more weeks, trim '
-      +money(short/ (S.weeks||12))+' a week from somewhere, or push the date out.</div>';
+    h+='<div class="result bad" style="margin-top:16px"><span class="big">It does not fit yet</span>'
+      +'Even the best week ('+sDate(bestAny.from)+') leaves you '+cash(short)
+      +' short of your floor. Spread it over more weeks, trim '
+      +cash(short/(S.weeks||12))+' a week from somewhere, or push the date out.</div>';
   }
 
   h+='<div class="sec-h"><h2>Week by week</h2></div>'
@@ -664,7 +730,7 @@ function viewFit(){
       +'<span class="wd"><b>'+r.label+'</b>'
       +'<span>'+(r.part?"pay it now":r.pay?"pay week":"off week")+(r.late?" · after your date":"")+'</span></span>'
       +'<span class="rt '+(r.status==="ok"?"teal":r.status==="tight"?"sand":"rose")+'">'
-      +money(r.worst)+'</span></button>';
+      +cash(r.worst)+'</span></button>';
   });
 
   if(F.pick!==null)
@@ -1287,12 +1353,14 @@ debt:["Debt","What you owe, and how fast it disappears.",[
 ["Smallest balance first","Clears whole debts sooner. Costs a little more in interest, but some people stick with it better because it feels like progress."],
 ["Debt free date","Assumes you keep paying and add nothing new to the balance. Treat it as close, not exact."]]],
 
-fit:["Fit it in","Something unplanned came up. This finds the best week to pay it without wrecking the plan.",[
-["Why it isn't obvious","Paying $600 in three weeks doesn't only affect that week. It drags every week after it down by $600 too, because that money never rolls forward. This checks all of them."],
-["Needed by","A deadline. Weeks past it are greyed out so you don't pick one that's too late."],
-["Pay it over","Spreading a cost over several weeks often turns an impossible payment into an easy one. Try it before giving up on something."],
-["The colours","Green fits above your floor. Amber dips under but stays positive. Red goes negative — don't."],
-["Add it to my plan","Writes it into your weekly ledger as real payments, so the same money doesn't get promised twice."]]]
+fit:["Planning ahead","Two different questions live here. Saving for a date, and paying for something that can't wait.",[
+["Saving for a date","The default, and usually the right one. Tell it what, how much, and when. It divides the cost by the weeks available and adds the payment on its actual due date. Nothing is paid early — your money stays yours until it's owed."],
+["Why not just pay it early","Paying a bill before it's due is a loss. That money could be sitting in your account, or better, coming off a credit card balance at 20% interest. Save toward the date instead."],
+["What you are saving for","Every future one-off in your plan, with the weeks remaining and what each needs per week. The total is what your park amount has to cover."],
+["Need to pay it now","For a repair or a forgotten bill that can't wait. Finds the first week you can pay without breaking your floor."],
+["Why the best week isn't obvious","Paying $600 in three weeks doesn't only affect that week. It drags every week after it down by $600 too, because that money never rolls forward. This checks all of them."],
+["Pay it over","Spreading a cost across several weeks often turns an impossible payment into an easy one. Try it before giving up on something."],
+["The colours","Green fits above your floor. Amber dips under but stays positive. Red goes negative — don't."]]]
 };
 function openHelp(){
   const H=HELP[tab]||HELP.plan;
@@ -1389,7 +1457,7 @@ document.addEventListener("click",e=>{
         D.bills.push({id:uid(), name:label+(n>1?" ("+(k+1)+" of "+n+")":""),
           amount:per, freq:"once", anchor:toISO(addDays(r.from,k*7))});
       }
-      F={name:"",amount:0,by:"",split:1,scanned:false,pick:null};
+      F={name:"",amount:0,by:"",split:1,scanned:false,pick:null,mode:F.mode};
       save(); tab="plan"; render();
     }
     return;
@@ -1419,6 +1487,30 @@ document.addEventListener("click",e=>{
     return;
   }
   if(e.target.closest("[data-aisend]")){ tap(); sendAI(); return; }
+  const fm=e.target.closest("[data-fitmode]");
+  if(fm){ tap(); readFit(); F.mode=fm.dataset.fitmode; F.scanned=false; F.pick=null; render(true); return; }
+  if(e.target.closest("[data-fitplan]")){ tap(); readFit(); F.scanned=true; render(); return; }
+  const gd=e.target.closest("[data-goaldel]");
+  if(gd){ tap();
+    D.bills=D.bills.filter(b=>b.id!==gd.dataset.goaldel);
+    save(); render(); return; }
+  if(e.target.closest("[data-fitsave]")){
+    tap(); readFit();
+    const amt=Number(F.amount)||0, by=parseISO(F.by);
+    if(amt<=0||!by) return;
+    const t=new Date(), today=new Date(t.getFullYear(),t.getMonth(),t.getDate());
+    const wks=Math.floor((by-today)/(7*86400000));
+    if(wks<2) return;
+    D.bills.push({id:uid(), name:(F.name||"Saved-for payment").trim(),
+      amount:amt, freq:"once", anchor:F.by});
+    D.settings.weeks=Math.max(+D.settings.weeks||12, Math.min(104, wks+2));
+    const fp=fundPlan();                       // recompute now the bill exists
+    D.settings.parkMode="manual";
+    D.settings.parkAmount=Math.ceil(fp.minP*100)/100;
+    F={name:"",amount:0,by:"",split:1,scanned:false,pick:null,mode:F.mode};
+    save(); tab="plan"; render(true);
+    return;
+  }
   const gt=e.target.closest("[data-goto]");
   if(gt){ tap(); tab=gt.dataset.goto; render(true); return; }
   const chip=e.target.closest("[data-cat]");
@@ -1506,7 +1598,7 @@ document.addEventListener("change",e=>{
   const s=e.target.closest("[data-set]");
   if(s){ const k=s.dataset.set;
     D.settings[k] = s.tagName==="SELECT" ? (k==="weekStart"?Number(s.value):s.value)
-      : (k==="weeks" ? Math.max(1,Math.min(52,Number(s.value)||12)) : (Number(s.value)||0));
+      : (k==="weeks" ? Math.max(1,Math.min(104,Number(s.value)||12)) : (Number(s.value)||0));
     if(k==="openingCash") D.settings.cashUpdated=toISO(new Date());
     if(k==="cur") D.settings.cur=s.value;
     if(k==="parkAmount") D.settings.parkMode="manual";
