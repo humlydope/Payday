@@ -222,7 +222,8 @@
     transition:transform .26s cubic-bezier(.32,.72,0,1);max-height:92vh;max-height:92dvh;overflow-y:auto;
     max-width:560px;margin:0 auto;}
   .sheet.on{transform:translateY(0)}
-  .grab{width:38px;height:4px;background:var(--line);border-radius:3px;margin:8px auto 16px;}
+  .grab{width:44px;height:5px;background:var(--line);border-radius:3px;margin:0 auto 14px;
+    box-sizing:content-box;padding:12px 60px;background-clip:content-box;}
   .sheet h3{margin:0 0 16px;font-size:18px;}
   .fl{margin-bottom:14px;}
   .fl label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
@@ -258,7 +259,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="2.2";
+const VERSION="2.4";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -499,9 +500,19 @@ function viewPlan(){
       w.outs.forEach(x=>h+=line(x.name,x.date,x.amount,x.debt?"sand":"","−"));
       const sm2=smoothed();
       const fr=FP.rows[i]||{fund:0,spend:w.closing};
-      h+='<div class="action">Pay the bills above, move <b>'+cash(FP.P)
-        +'</b> into your set-aside account (pot then holds <b>'+cash(fr.fund)+'</b>), then <b>'
-        +cash(Math.max(0,fr.spend-(+S.floor)))+'</b> is yours to spend this week.</div>';
+      if(fr.fund<-0.5){
+        h+='<div class="action">Pay the bills above, move <b>'+cash(FP.P)+'</b> into your '
+          +'set-aside account, then <b>'+cash(Math.max(0,fr.spend-(+S.floor)))
+          +'</b> is yours to spend this week.<br><br>'
+          +'<span style="color:var(--rose)">The pot is <b style="color:var(--rose)">'
+          +cash(-fr.fund)+' short</b> here — a bill lands before you\'ve saved enough for it, '
+          +'so it has to come out of your everyday money. Raise the weekly amount or put more '
+          +'in to start.</span></div>';
+      } else {
+        h+='<div class="action">Pay the bills above, move <b>'+cash(FP.P)
+          +'</b> into your set-aside account (pot then holds <b>'+cash(fr.fund)+'</b>), then <b>'
+          +cash(Math.max(0,fr.spend-(+S.floor)))+'</b> is yours to spend this week.</div>';
+      }
       if(lowW) h+='<div class="warn">▲ Below your '+money(+S.floor)
         +' floor. Move a bill or hold back spending the week before.</div>';
       h+='</div>';
@@ -689,7 +700,7 @@ function fundPlan(){
     if(!w.part) n++;
     cum += w.outs.filter(o=>o.lumpy).reduce((a,b)=>a+b.amount,0);
     const fund=fund0+P*n-cum;
-    const spend=w.closing-fund;
+    const spend=w.closing-Math.max(0,fund);
     if(fund<worstFund) worstFund=fund;
     if(spend<worstSpend) worstSpend=spend;
     if(n>0){
@@ -972,7 +983,9 @@ function openSheet(kind,id){
   sh.classList.add("on"); document.getElementById("bd").classList.add("on");
 }
 function closeSheet(){
-  document.getElementById("sheet").classList.remove("on");
+  const sh=document.getElementById("sheet");
+  sh.style.transition=""; sh.style.transform="";
+  sh.classList.remove("on");
   document.getElementById("bd").classList.remove("on");
   editing=null;
 }
@@ -1209,7 +1222,8 @@ plan:["Weekly plan","This is the whole point of the app: what lands, what leaves
 ["Free to spend","What's genuinely yours after every bill, every debt minimum, and the parking. Spend this without breaking anything."],
 ["Lowest point","The tightest your spending money gets over the weeks shown. This ignores the parked pot, because that money is already promised. If this is red, trouble is coming and you can see it early."],
 ["Pay week and off week","A thick teal bar means pay lands that week. A thin bar means it doesn't. An amber bar is the part-week you're standing in right now."],
-["Already set aside","How much is in the pot today. If you've been saving toward the rates bill already, put it here so the app doesn't tell you to start from nothing."]]],
+["Already set aside","How much is really in the pot today. The app can't see your bank, so this is the one place reality gets in. Everything after it is a forecast that assumes you actually make the transfers. Correct it whenever it drifts."],
+["A negative pot","Means a bill lands before you've saved enough for it, so it comes out of your everyday money instead. Raise the weekly amount, start the pot with more in it, or move the bill to a later week."]]],
 
 spend:["Spending","Log what you spend day to day. It comes straight off your balance so the plan stays honest without you re-typing anything.",[
 ["What to log","Only things that aren't already listed as a bill. Fixed costs like power and insurance belong on the Bills tab. Log the flexible stuff — food, petrol, takeaways — because that's the only kind you can actually cut."],
@@ -1254,6 +1268,40 @@ function openHelp(){
   sh.scrollTop=0;
   sh.classList.add("on"); document.getElementById("bd").classList.add("on");
 }
+
+/* ── swipe the sheet down to close ── */
+(function(){
+  const sh=document.getElementById("sheet");
+  let y0=0, dy=0, dragging=false;
+  const isField=t=>t.closest && t.closest("input,textarea,select,button");
+  sh.addEventListener("touchstart",e=>{
+    if(!sh.classList.contains("on")) return;
+    const onHandle=e.target.classList && e.target.classList.contains("grab");
+    if(!onHandle){
+      if(sh.scrollTop>0) return;      // let it scroll first
+      if(isField(e.target)) return;   // don't hijack taps on controls
+    }
+    y0=e.touches[0].clientY; dy=0; dragging=true;
+    sh.style.transition="none";
+  },{passive:true});
+  sh.addEventListener("touchmove",e=>{
+    if(!dragging) return;
+    dy=e.touches[0].clientY-y0;
+    if(dy<=0){ dy=0; sh.style.transform=""; return; }
+    e.preventDefault();
+    sh.style.transform="translateY("+dy+"px)";
+  },{passive:false});
+  const finish=()=>{
+    if(!dragging) return;
+    dragging=false;
+    sh.style.transition="";
+    sh.style.transform="";
+    if(dy>90) closeSheet();
+    dy=0;
+  };
+  sh.addEventListener("touchend",finish);
+  sh.addEventListener("touchcancel",finish);
+})();
 
 /* ── events ── */
 document.addEventListener("click",e=>{
