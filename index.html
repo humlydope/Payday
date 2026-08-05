@@ -259,7 +259,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="2.4";
+const VERSION="2.6";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -499,20 +499,25 @@ function viewPlan(){
       if(!w.outs.length) h+='<div class="ln"><span class="nm dim">Nothing due</span></div>';
       w.outs.forEach(x=>h+=line(x.name,x.date,x.amount,x.debt?"sand":"","−"));
       const sm2=smoothed();
-      const fr=FP.rows[i]||{fund:0,spend:w.closing};
-      if(fr.fund<-0.5){
-        h+='<div class="action">Pay the bills above, move <b>'+cash(FP.P)+'</b> into your '
-          +'set-aside account, then <b>'+cash(Math.max(0,fr.spend-(+S.floor)))
-          +'</b> is yours to spend this week.<br><br>'
-          +'<span style="color:var(--rose)">The pot is <b style="color:var(--rose)">'
-          +cash(-fr.fund)+' short</b> here — a bill lands before you\'ve saved enough for it, '
-          +'so it has to come out of your everyday money. Raise the weekly amount or put more '
-          +'in to start.</span></div>';
-      } else {
-        h+='<div class="action">Pay the bills above, move <b>'+cash(FP.P)
-          +'</b> into your set-aside account (pot then holds <b>'+cash(fr.fund)+'</b>), then <b>'
-          +cash(Math.max(0,fr.spend-(+S.floor)))+'</b> is yours to spend this week.</div>';
-      }
+      const fr=FP.rows[i]||{contrib:0,fromPot:0,potAfter:0,shortfall:0,spend:w.closing};
+      const yours=Math.max(0,fr.spend-(+S.floor));
+      h+='<div class="action">'
+        +'<div class="lbl" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;'
+        +'color:var(--dim);text-transform:uppercase;margin-bottom:8px">The set-aside pot</div>'
+        +ln2("Pot at the start",fr.potBefore)
+        +ln2("You move in",fr.contrib,"+")
+        +ln2("Paid out to bills",fr.fromPot,"−")
+        +'<div class="divider"></div>'
+        +ln2("Pot ends the week",fr.potAfter,"","teal")
+        +'<div class="divider"></div>'
+        +ln2("Everyday money left",fr.spend)
+        +ln2("Held back as your floor",(+S.floor),"−")
+        +ln2("Yours to spend",yours,"","teal")
+        +(fr.shortfall>0.5
+          ? '<div class="warn">▲ '+cash(fr.shortfall)+' of this week\'s bills had to come out '
+            +'of everyday money — the pot didn\'t have enough in it yet.</div>'
+          : '')
+        +'</div>';
       if(lowW) h+='<div class="warn">▲ Below your '+money(+S.floor)
         +' floor. Move a bill or hold back spending the week before.</div>';
       h+='</div>';
@@ -524,6 +529,10 @@ function viewPlan(){
 function setRow(label,key,val,int){
   return '<div class="setrow"><label>'+label+'</label>'
     +'<input type="number" inputmode="'+(int?"numeric":"decimal")+'" data-set="'+key+'" value="'+val+'"></div>';
+}
+function ln2(name,amount,sign,cls){
+  return '<div class="ln"><span class="nm'+(cls?" "+cls:"")+'">'+name+'</span>'
+    +'<span class="amt '+(cls||"")+'">'+(sign||"")+cash(amount)+'</span></div>';
 }
 function line(name,date,amount,cls,sign){
   return '<div class="ln"><span class="nm">'+esc(name)
@@ -696,21 +705,30 @@ function fundPlan(){
   const W=buildWeeks(), S=D.settings;
   const fund0=+S.fundStart||0, floor=+S.floor||0, P=parkAmount();
   let cum=0, n=0, minP=0, maxP=Infinity, worstFund=Infinity, worstSpend=Infinity;
+  let pot=Math.max(0,fund0);
   const rows=W.map(w=>{
     if(!w.part) n++;
-    cum += w.outs.filter(o=>o.lumpy).reduce((a,b)=>a+b.amount,0);
-    const fund=fund0+P*n-cum;
-    const spend=w.closing-Math.max(0,fund);
-    if(fund<worstFund) worstFund=fund;
-    if(spend<worstSpend) worstSpend=spend;
+    const lumpyDue=w.outs.filter(o=>o.lumpy).reduce((a,b)=>a+b.amount,0);
+    cum += lumpyDue;
+    const contrib = w.part ? 0 : P;
+    const potBefore = pot;
+    const fromPot = Math.min(potBefore+contrib, lumpyDue);
+    const potAfter = potBefore + contrib - fromPot;
+    const shortfall = lumpyDue - fromPot;
+    pot = potAfter;
+    const everyday = w.closing - potAfter;
+    if(potAfter<worstFund) worstFund=potAfter;
+    if(everyday<worstSpend) worstSpend=everyday;
     if(n>0){
       minP=Math.max(minP,(cum-fund0)/n);
       maxP=Math.min(maxP,(w.closing-fund0+cum-floor)/n);
     }
-    return {w, fund, spend, contribs:n};
+    return {w, contrib, lumpyDue, fromPot, potBefore, potAfter, shortfall,
+      spend:everyday, fund:potAfter, contribs:n};
   });
   minP=Math.max(0,minP);
-  return {rows, P, minP, maxP, fund0, worstFund, worstSpend,
+  const ideal=fund0+P*n-cum;
+  return {rows, P, minP, maxP, fund0, worstFund, worstSpend, ideal,
     possible:minP<=maxP, auto:autoPark()};
 }
 function viewFundCard(){
@@ -757,11 +775,12 @@ function viewFundCard(){
 const CATS=[
   ["Groceries","#3FD0AE"],["Takeaway & coffee","#E8B15C"],["Transport & fuel","#5EC7F0"],
   ["Household","#A78BFA"],["Kids","#F08BB4"],["Health","#A3D977"],
-  ["Fun & going out","#FF6B5E"],["Clothes","#6E8FF5"],["Other","#7E9A98"]
+  ["Fun & going out","#FF6B5E"],["Clothes","#6E8FF5"],["Debt payment","#F2C14E"],["Other","#7E9A98"]
 ];
+const DEBT_CAT="Debt payment";
 const catColor=c=>{const f=CATS.find(x=>x[0]===c);return f?f[1]:"#7E9A98";};
 const cash=n=>{const v=Math.abs(n);return (n<0?"-$":"$")+(v%1?v.toFixed(2):Math.round(v).toLocaleString("en-NZ"));};
-let SP={amount:"",cat:"Groceries",note:"",date:"",period:"week"};
+let SP={amount:"",cat:"Groceries",note:"",date:"",period:"week",debtId:""};
 
 function periodStart(p){
   const t=new Date(), today=new Date(t.getFullYear(),t.getMonth(),t.getDate());
@@ -830,6 +849,18 @@ function viewSpend(){
       +(SP.cat===c[0]?' style="background:'+c[1]+';border-color:'+c[1]+'"':'')
       +'>'+c[0]+'</button>').join("")
     +'</div>'
+    +(SP.cat===DEBT_CAT
+      ? (D.debts.length
+        ? '<div class="fl"><label>Which debt</label><select data-sp="debtId">'
+          +D.debts.map(d=>'<option value="'+d.id+'"'+(SP.debtId===d.id?" selected":"")+'>'
+            +esc(d.name||"Untitled")+' — '+cash(+d.balance||0)+' owing</option>').join("")
+          +'</select>'
+          +'<p class="note" style="margin-top:6px">Comes off the balance on the Debt tab as well '
+          +'as your cash. Log <b>extra</b> payments only — the minimum is already in your weekly '
+          +'plan, so logging it here would count it twice.</p></div>'
+        : '<div class="empty" style="margin-bottom:12px">No debts listed yet. Add one on the '
+          +'Debt tab first.</div>')
+      : '')
     +'<div class="two"><div class="fl" style="margin:0"><label>Note (optional)</label>'
     +'<input type="text" data-sp="note" value="'+esc(SP.note)+'" placeholder="Countdown"></div>'
     +'<div class="fl" style="margin:0"><label>When</label>'
@@ -883,10 +914,11 @@ function viewSpend(){
         h+='<div class="day"><span>'+(s.date===today?"TODAY":dayShort(dd)+" "+sDate(dd))
           +'</span><span>'+cash(dayTotal)+'</span></div>';
       }
+      const sub=[s.fx?foreign(s.fx.orig,s.fx.cur):"", s.debtName?esc(s.debtName):"",
+        esc(s.note||"")].filter(Boolean).join(" · ");
       h+='<div class="ent"><span class="swatch" style="background:'+catColor(s.cat)+'"></span>'
         +'<span class="eb"><b>'+esc(s.cat)+'</b>'
-        +(s.note||s.fx?'<span>'+(s.fx?foreign(s.fx.orig,s.fx.cur)+(s.note?' · ':''):'')
-          +esc(s.note||"")+'</span>':'')+'</span>'
+        +(sub?'<span>'+sub+'</span>':'')+'</span>'
         +'<span class="ea">'+cash(+s.amount||0)+'</span>'
         +'<button class="x" data-spdel="'+s.id+'" title="Remove">×</button></div>';
     });
@@ -899,20 +931,26 @@ function cutPanel(parts,total){
   if(!inP.length) return "";
   const dates=inP.map(s=>parseISO(s.date)).filter(Boolean).sort((a,b)=>a-b);
   const span=Math.max(1,Math.round((new Date()-dates[0])/86400000)+1);
-  const perWeek=total/span*7;
+  const debtPaid=inP.filter(s=>s.cat===DEBT_CAT).reduce((a,b)=>a+(+b.amount||0),0);
+  const living=total-debtPaid;
+  const perWeek=living/span*7;
   const free=smoothed().free;
   const gap=perWeek-free;
 
   let h='<div class="cut"><h4>Where the money is going</h4>';
-  h+='<div class="item">You\'re spending about <b>'+cash(perWeek)+' a week</b> on top of your bills. '
-    +'Your plan leaves <b>'+cash(free)+'</b> free.'
+  if(debtPaid>0)
+    h+='<div class="item">You\'ve put <b>'+cash(debtPaid)+'</b> extra at your debt in this '
+      +'stretch. That\'s not spending, so it\'s left out of everything below.</div>';
+  h+='<div class="item">Day-to-day you\'re spending about <b>'+cash(perWeek)+' a week</b> on top '
+    +'of your bills. Your plan leaves <b>'+cash(free)+'</b> free.'
     +(gap>0
       ? ' That\'s <b>'+cash(gap)+' a week over</b> — roughly '+cash(gap*52)+' a year coming out of your buffer.'
       : ' You\'re inside it by '+cash(-gap)+' a week.')
     +'</div>';
 
-  if(gap>0){
-    const top=parts.slice(0,3);
+  const trim=parts.filter(p=>p.cat!==DEBT_CAT);
+  if(gap>0 && trim.length){
+    const top=trim.slice(0,3);
     h+='<div class="item">Trimming these three by a quarter each would claw back <b>'
       +cash(top.reduce((a,b)=>a+b.amt,0)/span*7*0.25)+' a week</b>:</div>';
     top.forEach(p=>{
@@ -920,9 +958,9 @@ function cutPanel(parts,total){
       h+='<div class="item"><b>'+esc(p.cat)+'</b> — '+cash(w)+' a week. '
         +'Cut a quarter and you keep '+cash(w*0.25)+' a week, '+cash(w*0.25*52)+' a year.</div>';
     });
-  } else {
+  } else if(gap<=0){
     h+='<div class="item">Nothing needs cutting at this rate. Any of it you don\'t spend '
-      +'is worth throwing at the credit card — it\'s the most expensive money you owe.</div>';
+      +'is worth throwing at the most expensive debt you have.</div>';
   }
   return h+'</div>';
 }
@@ -1231,7 +1269,8 @@ spend:["Spending","Log what you spend day to day. It comes straight off your bal
 ["Currency","Travelling? Pick the currency, enter how many units one NZD buys, and type prices as you see them. It converts and stores NZD so everything else still makes sense."],
 ["The donut","Where your money went, biggest slice first. Switch between this week, the last 30 days, and everything."],
 ["Where the money is going","Turns your logging into a weekly rate and compares it to what your plan says is free. If you're over, it names your three biggest categories and shows what trimming each by a quarter is worth per week and per year."],
-["Removing an entry","Tap the × and the money goes back on your balance."]]],
+["Debt payment","Pick this category and choose which debt. The amount comes off that balance on the Debt tab as well as your cash, so your payoff date moves too. Log extra payments only — the minimum is already scheduled in your weekly plan, and logging it here would count it twice."],
+["Removing an entry","Tap the × and the money goes back on your balance. If it was a debt payment, the balance goes back on the debt too."]]],
 
 money:["Income and bills","Everything that comes in and goes out on a schedule. Get this right once and the rest of the app works.",[
 ["How often","Weekly, fortnightly, monthly, quarterly, yearly or one-off. Getting this right matters more than the exact amount — a quarterly rates bill behaves very differently to a monthly one."],
@@ -1398,6 +1437,12 @@ document.addEventListener("click",e=>{
     const rec={id:uid(), amount:nzd, cat:SP.cat, note:(SP.note||"").trim(),
       date:SP.date||toISO(new Date())};
     if(cur!=="NZD") rec.fx={cur:cur, orig:typed, rate:rate};
+    if(SP.cat===DEBT_CAT){
+      const d=D.debts.find(x=>x.id===SP.debtId)||D.debts[0];
+      if(!d){ alert("Add a debt on the Debt tab first."); return; }
+      rec.debtId=d.id; rec.debtName=d.name;
+      d.balance=Math.max(0,(+d.balance||0)-nzd);
+    }
     D.spend.push(rec);
     D.settings.openingCash=(+D.settings.openingCash||0)-nzd;
     D.settings.cashUpdated=toISO(new Date());
@@ -1411,6 +1456,10 @@ document.addEventListener("click",e=>{
     if(it){
       D.spend=D.spend.filter(x=>x.id!==id);
       D.settings.openingCash=(+D.settings.openingCash||0)+(+it.amount||0);
+      if(it.debtId){
+        const d=D.debts.find(x=>x.id===it.debtId);
+        if(d) d.balance=(+d.balance||0)+(+it.amount||0);
+      }
       save(); render();
     }
     return;
