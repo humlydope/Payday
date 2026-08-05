@@ -1,0 +1,711 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#050B0D">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Payday Ledger</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+
+<style>
+  :root{
+    --bg:#050B0D; --surface:#0E1A1D; --surface2:#152528; --line:#22383D;
+    --text:#E9F1EF; --dim:#8AA5A3; --teal:#3FD0AE; --rose:#FF6B5E; --sand:#E8B15C;
+    --mono: ui-monospace, "Roboto Mono", SFMono-Regular, Menlo, monospace;
+    --sans: system-ui, "Roboto", -apple-system, "Segoe UI", sans-serif;
+    --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+    font-size:16px; overscroll-behavior-y:contain;}
+  body{padding-bottom:calc(76px + var(--safe-b));}
+  button,input,select{font-family:inherit;font-size:16px;color:inherit;}
+  button{background:none;border:0;padding:0;cursor:pointer;}
+  .wrap{max-width:560px;margin:0 auto;padding:0 14px;}
+
+  header{padding:18px 0 10px;}
+  .eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.18em;color:var(--dim);
+    text-transform:uppercase;}
+  h1{font-size:26px;font-weight:800;letter-spacing:-.02em;margin:4px 0 0;}
+
+  /* stat tiles */
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0;}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 13px;}
+  .stat .lbl{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:var(--dim);
+    text-transform:uppercase;}
+  .stat .val{font-family:var(--mono);font-size:23px;font-weight:600;margin-top:5px;line-height:1;}
+  .stat .sub{font-size:11px;color:var(--dim);margin-top:5px;line-height:1.3;}
+  .teal{color:var(--teal)} .rose{color:var(--rose)} .sand{color:var(--sand)} .dim{color:var(--dim)}
+
+  /* collapsible setup */
+  details.setup{background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    padding:0 14px;margin-bottom:16px;}
+  details.setup summary{list-style:none;padding:14px 0;font-size:14px;font-weight:600;
+    display:flex;justify-content:space-between;align-items:center;}
+  details.setup summary::-webkit-details-marker{display:none}
+  details.setup summary::after{content:"▾";color:var(--dim);font-size:14px;}
+  details.setup[open] summary::after{content:"▴"}
+  .setrow{display:flex;justify-content:space-between;align-items:center;gap:12px;
+    padding:11px 0;border-top:1px solid var(--line);}
+  .setrow label{font-size:14px;color:var(--dim);flex:1;}
+  .setrow input{width:118px;}
+
+  input[type=number],input[type=text],input[type=date],select{
+    background:var(--surface2);border:1px solid var(--line);border-radius:10px;
+    padding:11px 12px;width:100%;outline:none;font-family:var(--mono);color:var(--text);
+    min-height:46px;}
+  input[type=text]{font-family:var(--sans)}
+  select{font-family:var(--sans);appearance:none;
+    background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),linear-gradient(135deg,var(--dim) 50%,transparent 50%);
+    background-position:calc(100% - 18px) 21px,calc(100% - 13px) 21px;
+    background-size:5px 5px,5px 5px;background-repeat:no-repeat;}
+  input:focus,select:focus{border-color:var(--teal)}
+
+  /* week cards */
+  .wk{background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    margin-bottom:8px;overflow:hidden;display:flex;}
+  .rail{width:3px;flex:0 0 3px;background:#2A4348;}
+  .wk.pay .rail{width:7px;flex:0 0 7px;background:var(--teal);}
+  .wk.low .rail{background:var(--rose)}
+  .wk-in{flex:1;min-width:0;}
+  .wk-head{width:100%;display:flex;justify-content:space-between;align-items:flex-start;
+    padding:14px 14px 12px;text-align:left;}
+  .wk-date{font-family:var(--mono);font-size:15px;font-weight:700;}
+  .tag{font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--dim);
+    display:block;margin-top:3px;}
+  .wk-amt{font-family:var(--mono);font-size:19px;font-weight:700;text-align:right;line-height:1;}
+  .wk-amt small{display:block;font-family:var(--mono);font-size:9px;font-weight:400;
+    color:var(--dim);margin-top:4px;letter-spacing:.05em;}
+  .bar{height:3px;background:#1B2E32;margin:0 14px;border-radius:2px;overflow:hidden;}
+  .bar i{display:block;height:100%;background:var(--teal);border-radius:2px;
+    transition:width .25s ease;}
+  .bar.low i{background:var(--rose)}
+  .wk-body{padding:12px 14px 14px;}
+  .ln{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 0;}
+  .ln .nm{font-size:14px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ln .dt{font-family:var(--mono);font-size:10px;color:var(--dim);margin-left:6px;}
+  .ln .amt{font-family:var(--mono);font-size:14px;white-space:nowrap;}
+  .divider{height:1px;background:var(--line);margin:9px 0;}
+  .warn{font-family:var(--mono);font-size:11px;color:var(--rose);margin-top:10px;line-height:1.4;}
+  .action{background:var(--surface2);border-radius:10px;padding:10px 12px;margin-top:12px;
+    font-size:13px;line-height:1.45;}
+  .action b{color:var(--sand)}
+
+  /* list cards */
+  .sec-h{display:flex;justify-content:space-between;align-items:baseline;margin:22px 0 4px;}
+  .sec-h h2{font-size:17px;font-weight:700;margin:0;}
+  .sec-note{font-size:12.5px;color:var(--dim);line-height:1.45;margin:0 0 12px;}
+  .card{width:100%;display:flex;justify-content:space-between;align-items:center;gap:12px;
+    background:var(--surface);border:1px solid var(--line);border-radius:12px;
+    padding:14px;margin-bottom:8px;text-align:left;min-height:62px;}
+  .card:active{background:var(--surface2)}
+  .card .nm{font-size:15px;font-weight:600;}
+  .card .meta{font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:4px;}
+  .card .amt{font-family:var(--mono);font-size:16px;white-space:nowrap;}
+  .add{width:100%;border:1px dashed var(--line);border-radius:12px;padding:15px;
+    color:var(--teal);font-family:var(--mono);font-size:13px;letter-spacing:.05em;}
+  .add:active{background:var(--surface)}
+  .empty{border:1px dashed var(--line);border-radius:12px;padding:18px;text-align:center;
+    color:var(--dim);font-size:13px;margin-bottom:8px;}
+  .note{font-size:12px;color:var(--dim);line-height:1.5;margin:16px 0 0;}
+  .ghost{border:1px solid var(--line);border-radius:10px;padding:12px 16px;
+    font-family:var(--mono);font-size:12px;color:var(--dim);margin-top:10px;width:100%;}
+
+  /* bottom nav */
+  nav{position:fixed;left:0;right:0;bottom:0;background:rgba(5,11,13,.94);
+    backdrop-filter:blur(12px);border-top:1px solid var(--line);
+    padding-bottom:var(--safe-b);z-index:40;}
+  .navin{max-width:560px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);}
+  nav button{padding:12px 2px 13px;color:var(--dim);font-size:10.5px;letter-spacing:.02em;
+    display:flex;flex-direction:column;align-items:center;gap:5px;}
+  nav button .ic{font-size:18px;line-height:1}
+  nav button.on{color:var(--teal)}
+
+  /* money in hand */
+  .hand{background:var(--surface);border:1px solid var(--teal);border-radius:16px;
+    padding:15px 16px 14px;margin:14px 0;}
+  .hand.stale{border-color:var(--sand)}
+  .hand .lbl{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--dim);
+    text-transform:uppercase;}
+  .handrow{display:flex;align-items:center;gap:4px;margin:8px 0 2px;}
+  .handrow .cur{font-family:var(--mono);font-size:26px;color:var(--dim);}
+  .handrow input{font-family:var(--mono);font-size:30px;font-weight:700;color:var(--teal);
+    background:none;border:0;padding:4px 0;min-height:0;flex:1;width:100%;}
+  .handrow input:focus{border:0;outline:none;}
+  .handnote{font-size:11.5px;color:var(--dim);line-height:1.5;margin-top:6px;}
+  .handnote b{color:var(--text);font-weight:600;}
+  .hand.stale .handnote b{color:var(--sand)}
+  .wk.part .rail{background:var(--sand);width:4px;flex:0 0 4px;}
+
+  /* fit it in */
+  .verdict{width:100%;display:flex;align-items:center;gap:11px;padding:12px 13px;
+    background:var(--surface);border:1px solid var(--line);border-radius:11px;
+    margin-bottom:6px;text-align:left;min-height:56px;}
+  .verdict.sel{border-color:var(--teal);background:var(--surface2);}
+  .verdict .dot{width:9px;height:9px;border-radius:50%;flex:0 0 9px;}
+  .dot.ok{background:var(--teal)} .dot.tight{background:var(--sand)}
+  .dot.no{background:var(--rose)} .dot.late{background:#31474C}
+  .verdict .wd{flex:1;min-width:0;}
+  .verdict .wd b{font-family:var(--mono);font-size:14px;font-weight:700;display:block;}
+  .verdict .wd span{font-size:11.5px;color:var(--dim);}
+  .verdict .rt{font-family:var(--mono);font-size:13px;white-space:nowrap;}
+  .verdict.dead{opacity:.45}
+  .result{background:var(--surface2);border-radius:13px;padding:15px;margin:16px 0 6px;
+    line-height:1.5;font-size:14px;}
+  .result .big{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--teal);
+    display:block;margin-bottom:6px;}
+  .result.bad .big{color:var(--rose)}
+  .legend{font-size:11.5px;color:var(--dim);line-height:1.6;margin:10px 0 18px;}
+
+  /* sheet */
+  .backdrop{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:50;opacity:0;
+    pointer-events:none;transition:opacity .2s;}
+  .backdrop.on{opacity:1;pointer-events:auto;}
+  .sheet{position:fixed;left:0;right:0;bottom:0;z-index:60;background:var(--surface);
+    border-top:1px solid var(--line);border-radius:20px 20px 0 0;
+    padding:8px 16px calc(20px + var(--safe-b));transform:translateY(102%);
+    transition:transform .26s cubic-bezier(.32,.72,0,1);max-height:92vh;overflow-y:auto;
+    max-width:560px;margin:0 auto;}
+  .sheet.on{transform:translateY(0)}
+  .grab{width:38px;height:4px;background:var(--line);border-radius:3px;margin:8px auto 16px;}
+  .sheet h3{margin:0 0 16px;font-size:18px;}
+  .fl{margin-bottom:14px;}
+  .fl label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+    color:var(--dim);text-transform:uppercase;margin-bottom:6px;}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .sheet-actions{display:flex;gap:10px;margin-top:20px;}
+  .btn{flex:1;border-radius:12px;padding:15px;font-weight:700;font-size:15px;text-align:center;}
+  .btn.save{background:var(--teal);color:#04211B;}
+  .btn.del{border:1px solid var(--rose);color:var(--rose);flex:0 0 90px;}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow" id="eyebrow">Week starts Monday</div>
+    <h1>Payday Ledger</h1>
+  </header>
+  <main id="view"></main>
+</div>
+
+<nav><div class="navin">
+  <button data-tab="plan" class="on"><span class="ic">▤</span>Weekly plan</button>
+  <button data-tab="money"><span class="ic">◈</span>Income &amp; bills</button>
+  <button data-tab="debt"><span class="ic">◔</span>Debt</button>
+  <button data-tab="fit"><span class="ic">＋</span>Fit it in</button>
+</div></nav>
+
+<div class="backdrop" id="bd"></div>
+<div class="sheet" id="sheet"></div>
+
+<script>
+/* ── storage: works inside Claude and as a hosted app ── */
+const store = {
+  async get(k){
+    try{ if(window.storage){ const r = await window.storage.get(k); return r ? r.value : null; } }catch(e){}
+    try{ return localStorage.getItem(k); }catch(e){ return null; }
+  },
+  async set(k,v){
+    try{ if(window.storage){ await window.storage.set(k,v); return; } }catch(e){}
+    try{ localStorage.setItem(k,v); }catch(e){}
+  }
+};
+
+/* ── dates ── */
+const addDays=(d,n)=>new Date(d.getFullYear(),d.getMonth(),d.getDate()+n);
+const makeDate=(y,m,day)=>{const dim=new Date(y,m+1,0).getDate();return new Date(y,m,Math.min(day,dim));};
+const parseISO=s=>{if(!s)return null;const p=s.split("-").map(Number);
+  if(p.length!==3||p.some(isNaN))return null;return new Date(p[0],p[1]-1,p[2]);};
+const toISO=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+const sDate=d=>d.toLocaleDateString("en-NZ",{day:"numeric",month:"short"});
+const dayShort=d=>d.toLocaleDateString("en-NZ",{weekday:"short"});
+const lDate=d=>d.toLocaleDateString("en-NZ",{day:"numeric",month:"short",year:"numeric"});
+const money=n=>(n<0?"-$":"$")+Math.abs(Math.round(n)).toLocaleString("en-NZ");
+const uid=()=>Math.random().toString(36).slice(2,9);
+const esc=s=>String(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+const FREQS=[["weekly","Weekly"],["fortnightly","Fortnightly"],["monthly","Monthly"],
+  ["quarterly","Quarterly"],["annual","Yearly"],["once","One-off"]];
+const FLBL=Object.fromEntries(FREQS);
+const PER_YEAR={weekly:52,fortnightly:26,monthly:12,quarterly:4,annual:1,once:0};
+
+function occurrences(anchorISO,freq,from,to){
+  const out=[],anchor=parseISO(anchorISO);
+  if(!anchor)return out;
+  if(freq==="once"){ if(anchor>=from&&anchor<to)out.push(anchor); return out; }
+  if(freq==="weekly"||freq==="fortnightly"){
+    const step=freq==="weekly"?7:14; let d=anchor;
+    const gap=Math.round((from-d)/86400000);
+    if(gap>0)d=addDays(d,Math.floor(gap/step)*step);
+    let g=0; while(d<to&&g++<400){ if(d>=from)out.push(d); d=addDays(d,step); }
+    return out;
+  }
+  const stepM=freq==="monthly"?1:freq==="quarterly"?3:12;
+  let y=anchor.getFullYear(),m=anchor.getMonth();
+  const day=anchor.getDate(); let cur=makeDate(y,m,day),g=0;
+  while(cur<from&&g++<800){ m+=stepM; cur=makeDate(y,m,day); }
+  g=0;
+  while(cur<to&&g++<800){ if(cur>=from)out.push(cur); m+=stepM; cur=makeDate(y,m,day); }
+  return out;
+}
+
+/* ── data ── */
+function nextFriday(){const t=new Date();const d=new Date(t.getFullYear(),t.getMonth(),t.getDate());
+  return addDays(d,(5-d.getDay()+7)%7);}
+function seed(){
+  const f=toISO(nextFriday()), f1=toISO(addDays(nextFriday(),7)), f2=toISO(addDays(nextFriday(),14));
+  return{
+    incomes:[{id:uid(),name:"Salary",amount:900,freq:"fortnightly",anchor:f},
+             {id:uid(),name:"Partner",amount:340,freq:"weekly",anchor:f}],
+    bills:[{id:uid(),name:"Partners Life",amount:350,freq:"fortnightly",anchor:f},
+           {id:uid(),name:"Auckland Council rates",amount:450,freq:"quarterly",anchor:f},
+           {id:uid(),name:"Mum allowance",amount:200,freq:"monthly",anchor:f1},
+           {id:uid(),name:"Power",amount:180,freq:"monthly",anchor:f2}],
+    debts:[{id:uid(),name:"Credit card",balance:4200,apr:20.95,minPayment:120,freq:"monthly",anchor:f1}],
+    settings:{weeks:12,floor:200,extraDebt:0,openingCash:0,strategy:"avalanche",weekStart:1,cashUpdated:""},
+    open:{}
+  };
+}
+let D=seed(), tab="plan", ready=false;
+
+async function boot(){
+  const raw=await store.get("payday:v1");
+  if(raw){ try{ const p=JSON.parse(raw);
+    if(p&&p.settings){ const base=seed();
+      D=Object.assign(base,p);
+      D.settings=Object.assign(base.settings,p.settings); }
+  }catch(e){} }
+  ready=true; render();
+}
+let saveT;
+function save(){ if(!ready)return; clearTimeout(saveT);
+  saveT=setTimeout(()=>store.set("payday:v1",JSON.stringify(D)),400); }
+const tap=()=>{ try{navigator.vibrate&&navigator.vibrate(8);}catch(e){} };
+
+/* ── maths ── */
+function buildWeeks(){
+  const t=new Date(), today=new Date(t.getFullYear(),t.getMonth(),t.getDate());
+  const ws=(D.settings.weekStart===undefined)?1:+D.settings.weekStart;
+  const dow=today.getDay();
+  const firstStart = dow===ws ? today : addDays(today,(ws-dow+7)%7);
+  const S=D.settings, rows=[], spans=[]; let carry=+S.openingCash||0;
+  if(firstStart>today) spans.push([today,firstStart,true]);
+  for(let i=0;i<S.weeks;i++) spans.push([addDays(firstStart,i*7),addDays(firstStart,(i+1)*7),false]);
+  spans.forEach(sp=>{
+    const from=sp[0], to=sp[1], part=sp[2], ins=[], outs=[];
+    D.incomes.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
+      ins.push({name:it.name,amount:+it.amount||0,date:d})));
+    D.bills.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
+      outs.push({name:it.name,amount:+it.amount||0,date:d})));
+    D.debts.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
+      outs.push({name:it.name+" minimum",amount:+it.minPayment||0,date:d,debt:1})));
+    const extra=+S.extraDebt||0;
+    if(extra>0&&D.debts.length&&!part) outs.push({name:"Extra off debt",amount:extra,date:from,debt:1});
+    outs.sort((a,b)=>a.date-b.date);
+    const totalIn=ins.reduce((a,b)=>a+b.amount,0), totalOut=outs.reduce((a,b)=>a+b.amount,0);
+    const opening=carry, closing=opening+totalIn-totalOut; carry=closing;
+    rows.push({from,to,part,ins,outs,totalIn,totalOut,opening,closing,pay:ins.length>1});
+  });
+  return rows;
+}
+function weekName(w){
+  const end=addDays(w.to,-1);
+  return w.part ? "Now → "+dayShort(end)+" "+sDate(end) : dayShort(w.from)+" "+sDate(w.from);
+}
+function weekTag(w){
+  return w.part ? "REST OF THIS WEEK" : (w.pay?"PAY WEEK":"OFF WEEK");
+}
+function smoothed(){
+  const wk=(arr,key)=>arr.reduce((a,b)=>a+((+b[key]||0)*PER_YEAR[b.freq])/52,0);
+  const income=wk(D.incomes,"amount");
+  const billsWeekly=D.bills.filter(b=>b.freq==="weekly").reduce((a,b)=>a+(+b.amount||0),0);
+  const billsLumpy=wk(D.bills.filter(b=>b.freq!=="weekly"),"amount");
+  const debtMin=wk(D.debts,"minPayment"), extra=+D.settings.extraDebt||0;
+  return{income,billsWeekly,billsLumpy,debtMin,extra,
+    free:income-billsWeekly-billsLumpy-debtMin-extra};
+}
+function payoff(){
+  let ds=D.debts.map(d=>({name:d.name,bal:+d.balance||0,apr:+d.apr||0,
+    min:((+d.minPayment||0)*PER_YEAR[d.freq])/12})).filter(d=>d.bal>0);
+  if(!ds.length)return null;
+  const extraM=((+D.settings.extraDebt||0)*52)/12;
+  let interest=0,months=0;
+  while(ds.some(d=>d.bal>0)&&months<600){
+    months++; let pool=extraM;
+    ds.forEach(d=>{ if(d.bal<=0)return;
+      const i=(d.bal*d.apr)/100/12; interest+=i; d.bal+=i;
+      const p=Math.min(d.bal,d.min); d.bal-=p;
+      if(d.bal<=.01){ pool+=d.min-p; d.bal=0; } });
+    const live=ds.filter(d=>d.bal>0); if(!live.length)break;
+    const target=D.settings.strategy==="snowball"
+      ? live.reduce((a,b)=>b.bal<a.bal?b:a) : live.reduce((a,b)=>b.apr>a.apr?b:a);
+    const p=Math.min(target.bal,pool); target.bal-=p; if(target.bal<=.01)target.bal=0;
+  }
+  const end=new Date(); end.setMonth(end.getMonth()+months);
+  return{months,interest,end,hit:months>=600};
+}
+
+/* ── views ── */
+function statTile(lbl,val,cls,sub){
+  return '<div class="stat"><div class="lbl">'+lbl+'</div><div class="val '+(cls||"")+'">'+val+
+    '</div>'+(sub?'<div class="sub">'+sub+'</div>':'')+'</div>';
+}
+function viewPlan(){
+  const W=buildWeeks(), sm=smoothed(), S=D.settings;
+  const low=W.reduce((m,w)=>w.closing<m.closing?w:m,W[0]||{closing:0});
+
+  const upd=parseISO(S.cashUpdated);
+  const days=upd?Math.round((new Date()-upd)/86400000):null;
+  const ago = days===null ? "not set yet"
+    : days<=0 ? "updated today" : days===1 ? "updated yesterday"
+    : days<8 ? "updated "+days+" days ago"
+    : "last updated "+lDate(upd)+" — worth a refresh";
+
+  let h='<div class="hand'+(days!==null&&days>7?" stale":"")+'">'
+    +'<div class="lbl">Money I have right now</div>'
+    +'<div class="handrow"><span class="cur">$</span>'
+    +'<input type="number" inputmode="decimal" data-set="openingCash" value="'
+    +(+S.openingCash||0)+'"></div>'
+    +'<div class="handnote">Bank plus cash in your pocket. Everything below is counted from '
+    +'this number. <b>'+ago+'</b></div></div>';
+
+  h+='<div class="stats">'
+    +statTile("Income / week",money(sm.income),"","averaged over the cycle")
+    +statTile("Park each week",money(sm.billsLumpy),"sand","for the bills that aren't weekly")
+    +statTile("Free to spend",money(sm.free),sm.free<0?"rose":"teal","after every commitment")
+    +statTile("Lowest point",money(low.closing||0),(low.closing||0)<(+S.floor)?"rose":"",
+        low.from?"week of "+sDate(low.from):"")
+    +'</div>';
+
+  h+='<details class="setup"'+(D.open.setup?" open":"")+' id="setupBox"><summary>Your numbers</summary>'
+    +'<div class="setrow"><label>Week starts on</label>'
+    +'<select data-set="weekStart" style="width:140px">'
+    +[[1,"Monday"],[5,"Friday"],[0,"Sunday"],[6,"Saturday"]].map(d=>
+      '<option value="'+d[0]+'"'+((+S.weekStart)===d[0]?" selected":"")+'>'+d[1]+'</option>').join("")
+    +'</select></div>'
+    +setRow("Safety floor","floor",S.floor)
+    +setRow("Extra off debt each week","extraDebt",S.extraDebt)
+    +setRow("Weeks to show","weeks",S.weeks,1)
+    +'</details>';
+
+  if(sm.free<0) h+='<div class="empty" style="border-color:var(--rose);color:var(--rose);text-align:left">'
+    +'Your commitments run '+money(-sm.free)+' a week ahead of your income. Something has to move '
+    +'before the buffer runs out.</div>';
+
+  W.forEach((w,i)=>{
+    const lowW=w.closing<(+S.floor);
+    const open=D.open["w"+i]!==undefined?D.open["w"+i]:(i===0);
+    const cap=Math.max(w.totalIn,Math.abs(w.closing),1);
+    const pct=Math.max(0,Math.min(100,(w.closing/cap)*100));
+    h+='<div class="wk'+(w.pay?" pay":"")+(w.part?" part":"")+(lowW?" low":"")+'"><div class="rail"></div><div class="wk-in">'
+      +'<button class="wk-head" data-week="'+i+'">'
+      +'<span><span class="wk-date">'+weekName(w)+'</span>'
+      +'<span class="tag">'+weekTag(w)+'</span></span>'
+      +'<span class="wk-amt '+(lowW?"rose":"teal")+'">'+money(w.closing)
+      +'<small>LEFT AFTER THIS WEEK</small></span></button>'
+      +'<div class="bar'+(lowW?" low":"")+'"><i style="width:'+pct+'%"></i></div>';
+    if(open){
+      h+='<div class="wk-body">';
+      h+=line("Carried in",null,w.opening,"dim");
+      w.ins.forEach(x=>h+=line(x.name,x.date,x.amount,"teal","+"));
+      h+='<div class="divider"></div>';
+      if(!w.outs.length) h+='<div class="ln"><span class="nm dim">Nothing due</span></div>';
+      w.outs.forEach(x=>h+=line(x.name,x.date,x.amount,x.debt?"sand":"","−"));
+      const sm2=smoothed();
+      h+='<div class="action">Pay the bills above, move <b>'+money(sm2.billsLumpy)
+        +'</b> into your set-aside account, then <b>'+money(Math.max(0,w.closing-(+S.floor)))
+        +'</b> is yours to spend this week.</div>';
+      if(lowW) h+='<div class="warn">▲ Below your '+money(+S.floor)
+        +' floor. Move a bill or hold back spending the week before.</div>';
+      h+='</div>';
+    }
+    h+='</div></div>';
+  });
+  return h;
+}
+function setRow(label,key,val,int){
+  return '<div class="setrow"><label>'+label+'</label>'
+    +'<input type="number" inputmode="'+(int?"numeric":"decimal")+'" data-set="'+key+'" value="'+val+'"></div>';
+}
+function line(name,date,amount,cls,sign){
+  return '<div class="ln"><span class="nm">'+esc(name)
+    +(date?'<span class="dt">'+sDate(date)+'</span>':'')+'</span>'
+    +'<span class="amt '+(cls||"")+'">'+(sign||"")+money(amount)+'</span></div>';
+}
+
+function viewMoney(){
+  const card=(it,kind)=>'<button class="card" data-edit="'+kind+'" data-id="'+it.id+'">'
+    +'<span><span class="nm">'+esc(it.name||"Untitled")+'</span>'
+    +'<span class="meta">'+FLBL[it.freq]+' · next '+(parseISO(it.anchor)?sDate(parseISO(it.anchor)):"—")+'</span></span>'
+    +'<span class="amt '+(kind==="income"?"teal":"")+'">'+money(+it.amount||0)+'</span></button>';
+  let h='<div class="sec-h"><h2>Money coming in</h2></div>'
+    +'<p class="sec-note">Set how often it repeats and the next date it lands. Fortnightly pay needs one entry only.</p>';
+  h+=D.incomes.length?D.incomes.map(i=>card(i,"income")).join(""):'<div class="empty">No income yet.</div>';
+  h+='<button class="add" data-edit="income" data-id="new">+ Add income</button>';
+  h+='<div class="sec-h"><h2>Bills and commitments</h2></div>'
+    +'<p class="sec-note">Put the yearly and quarterly ones in too — rates, insurance, rego. They get spread into your weekly set-aside.</p>';
+  h+=D.bills.length?D.bills.map(i=>card(i,"bill")).join(""):'<div class="empty">No bills yet.</div>';
+  h+='<button class="add" data-edit="bill" data-id="new">+ Add bill</button>';
+  h+='<button class="ghost" data-reset="1">Start again with the example numbers</button>';
+  h+='<button class="ghost" data-clear="1">Clear everything</button>';
+  return h;
+}
+
+function viewDebt(){
+  const P=payoff(), total=D.debts.reduce((a,b)=>a+(+b.balance||0),0);
+  let h='<div class="stats">'
+    +statTile("Total owing",money(total),total?"rose":"teal")
+    +statTile("Debt free",P?(P.hit?"Not yet":lDate(P.end)):"—",
+       "",P&&!P.hit?P.months+" months away":"add an extra payment")
+    +'</div>'
+    +'<div class="stats" style="grid-template-columns:1fr">'
+    +statTile("Interest you'll pay on this plan",P&&!P.hit?money(P.interest):"—","sand")
+    +'</div>';
+  h+='<details class="setup" open><summary>Payoff plan</summary>'
+    +setRow("Extra per week","extraDebt",D.settings.extraDebt)
+    +'<div class="setrow"><label>Pay off in what order</label></div>'
+    +'<div style="padding-bottom:14px"><select data-set="strategy">'
+    +'<option value="avalanche"'+(D.settings.strategy==="avalanche"?" selected":"")+'>Highest interest first</option>'
+    +'<option value="snowball"'+(D.settings.strategy==="snowball"?" selected":"")+'>Smallest balance first</option>'
+    +'</select></div></details>';
+  h+='<div class="sec-h"><h2>What you owe</h2></div>';
+  h+=D.debts.length?D.debts.map(d=>'<button class="card" data-edit="debt" data-id="'+d.id+'">'
+    +'<span><span class="nm">'+esc(d.name||"Untitled")+'</span>'
+    +'<span class="meta">'+(+d.apr||0)+'% · '+money(+d.minPayment||0)+' '+FLBL[d.freq].toLowerCase()+'</span></span>'
+    +'<span class="amt rose">'+money(+d.balance||0)+'</span></button>').join("")
+    :'<div class="empty">Nothing owing. Add a card or loan to see a payoff date.</div>';
+  h+='<button class="add" data-edit="debt" data-id="new">+ Add debt</button>';
+  h+='<p class="note">The payoff date assumes you keep paying the minimums plus the extra and add nothing new to the balance. Interest is worked out monthly, so treat it as close, not exact.</p>';
+  return h;
+}
+
+/* ── fit it in: where does an unplanned payment land ── */
+let F={name:"",amount:0,by:"",split:1,scanned:false,pick:null};
+
+function fitScan(){
+  const W=buildWeeks(), floor=+D.settings.floor||0;
+  const n=Math.max(1,Math.min(12,+F.split||1)), per=(+F.amount||0)/n;
+  const by=parseISO(F.by);
+  return W.map((w,i)=>{
+    let worst=Infinity;
+    for(let j=i;j<W.length;j++){
+      worst=Math.min(worst, W[j].closing - per*Math.min(n,j-i+1));
+    }
+    const lastPay=addDays(w.from,(n-1)*7);
+    return {i, from:w.from, last:lastPay, worst, pay:w.pay, part:w.part, label:weekName(w),
+      late: by ? lastPay>by : false,
+      status: worst>=floor ? "ok" : worst>=0 ? "tight" : "no"};
+  });
+}
+function fitBest(rows){
+  return rows.find(r=>!r.late&&r.status==="ok")
+      || rows.find(r=>!r.late&&r.status==="tight")
+      || null;
+}
+function viewFit(){
+  const S=D.settings, n=Math.max(1,+F.split||1), amt=+F.amount||0;
+  let h='<div class="sec-h"><h2>Something unplanned?</h2></div>'
+    +'<p class="sec-note">A purchase, a bill you forgot, a repair. Put it in here and the app '
+    +'finds the first week you can pay it without breaking your '+money(+S.floor)+' floor.</p>';
+
+  h+='<div class="fl"><label>What is it</label>'
+    +'<input type="text" data-fit="name" value="'+esc(F.name)+'" placeholder="Fridge / overdue rego"></div>'
+    +'<div class="two"><div class="fl"><label>Amount</label>'
+    +'<input type="number" inputmode="decimal" data-fit="amount" value="'+(amt||"")+'" placeholder="0"></div>'
+    +'<div class="fl"><label>Needed by</label>'
+    +'<input type="date" data-fit="by" value="'+esc(F.by)+'"></div></div>'
+    +'<div class="fl"><label>Pay it over</label><select data-fit="split">'
+    +[1,2,3,4,6,8,12].map(k=>'<option value="'+k+'"'+(n===k?" selected":"")+'>'
+      +(k===1?"One payment":k+" weekly payments")+'</option>').join("")
+    +'</select></div>'
+    +'<button class="btn save" data-fitgo="1" style="width:100%">Find the best week</button>';
+
+  if(!F.scanned||amt<=0) return h;
+
+  const rows=fitScan(), best=fitBest(rows), floor=+S.floor||0, per=amt/n;
+  if(F.pick===null&&best) F.pick=best.i;
+
+  if(best){
+    const r=rows[F.pick!==null?F.pick:best.i];
+    h+='<div class="result'+(r.status==="ok"?"":" bad")+'">'
+      +'<span class="big">'+(r.part?"Pay it now":"Start "+r.label)+'</span>'
+      +(n>1?'Pay '+money(per)+' a week for '+n+' weeks, last one '+sDate(r.last)+'. ':
+             'Pay the whole '+money(amt)+' that week. ')
+      +'Your buffer bottoms out at <b>'+money(r.worst)+'</b>'
+      +(r.status==="ok" ? ', still above your floor.' :
+        r.status==="tight" ? ', which dips under your floor but stays positive.' :
+        ', which goes negative. Don\'t do it this week.')
+      +'</div>';
+    if(best.i>0 && F.pick===best.i)
+      h+='<p class="legend">Paying it any earlier than this breaks the plan. '
+        +'Tap another week below to test it.</p>';
+  } else {
+    const bestAny=rows.reduce((a,b)=>b.worst>a.worst?b:a,rows[0]);
+    const short=floor-bestAny.worst;
+    h+='<div class="result bad"><span class="big">It doesn\'t fit yet</span>'
+      +'Even the best week ('+sDate(bestAny.from)+') leaves you '+money(short)
+      +' short of your floor. Options: spread it over more weeks, trim '
+      +money(short/ (S.weeks||12))+' a week from somewhere, or push the date out.</div>';
+  }
+
+  h+='<div class="sec-h"><h2>Week by week</h2></div>'
+    +'<p class="legend">Green fits · amber is tight · red breaks it · faded is past your date. '
+    +'The figure is the lowest your buffer gets after paying.</p>';
+
+  rows.forEach(r=>{
+    h+='<button class="verdict'+(F.pick===r.i?" sel":"")+(r.late?" dead":"")+'" data-pick="'+r.i+'">'
+      +'<span class="dot '+(r.late?"late":r.status)+'"></span>'
+      +'<span class="wd"><b>'+r.label+'</b>'
+      +'<span>'+(r.part?"pay it now":r.pay?"pay week":"off week")+(r.late?" · after your date":"")+'</span></span>'
+      +'<span class="rt '+(r.status==="ok"?"teal":r.status==="tight"?"sand":"rose")+'">'
+      +money(r.worst)+'</span></button>';
+  });
+
+  if(F.pick!==null)
+    h+='<button class="btn save" data-fitadd="1" style="width:100%;margin-top:14px">'
+      +'Add it to my plan</button>'
+      +'<p class="note">This drops it into your weekly ledger as a real payment, so every '
+      +'week after it updates too.</p>';
+  return h;
+}
+
+function render(){
+  const v=document.getElementById("view");
+  v.innerHTML = tab==="plan"?viewPlan(): tab==="money"?viewMoney():
+                tab==="debt"?viewDebt(): viewFit();
+  document.querySelectorAll("nav button").forEach(b=>
+    b.classList.toggle("on",b.dataset.tab===tab));
+  const names=["Sunday","Monday","","","","Friday","Saturday"];
+  const eb=document.getElementById("eyebrow");
+  if(eb) eb.textContent="Week starts "+(names[(D.settings.weekStart===undefined?1:+D.settings.weekStart)]||"Monday");
+  window.scrollTo({top:0});
+}
+
+/* ── sheet editor ── */
+let editing=null;
+function openSheet(kind,id){
+  const list = kind==="income"?D.incomes: kind==="bill"?D.bills: D.debts;
+  let item = list.find(x=>x.id===id);
+  const isNew = !item;
+  if(isNew){
+    item = kind==="debt"
+      ? {id:uid(),name:"",balance:0,apr:0,minPayment:0,freq:"monthly",anchor:toISO(nextFriday())}
+      : {id:uid(),name:"",amount:0,freq:"monthly",anchor:toISO(nextFriday())};
+  }
+  editing={kind,item:Object.assign({},item),isNew};
+  const title=(isNew?"New ":"Edit ")+(kind==="income"?"income":kind==="bill"?"bill":"debt");
+  const freqOpts=(kind==="debt"?FREQS.filter(f=>f[0]!=="once"):FREQS)
+    .map(f=>'<option value="'+f[0]+'"'+(item.freq===f[0]?" selected":"")+'>'+f[1]+'</option>').join("");
+  let body='<div class="fl"><label>Name</label>'
+    +'<input type="text" data-f="name" value="'+esc(item.name)+'" placeholder="'
+    +(kind==="income"?"Salary":kind==="bill"?"Power":"Credit card")+'"></div>';
+  if(kind==="debt"){
+    body+='<div class="two"><div class="fl"><label>Balance owing</label>'
+      +'<input type="number" inputmode="decimal" data-f="balance" value="'+item.balance+'"></div>'
+      +'<div class="fl"><label>Interest rate %</label>'
+      +'<input type="number" inputmode="decimal" step="0.01" data-f="apr" value="'+item.apr+'"></div></div>'
+      +'<div class="fl"><label>Minimum payment</label>'
+      +'<input type="number" inputmode="decimal" data-f="minPayment" value="'+item.minPayment+'"></div>';
+  } else {
+    body+='<div class="fl"><label>Amount</label>'
+      +'<input type="number" inputmode="decimal" data-f="amount" value="'+item.amount+'"></div>';
+  }
+  body+='<div class="fl"><label>How often</label><select data-f="freq">'+freqOpts+'</select></div>'
+    +'<div class="fl"><label>'+(kind==="debt"?"Next payment due":"Next date")+'</label>'
+    +'<input type="date" data-f="anchor" value="'+item.anchor+'"></div>'
+    +'<div class="sheet-actions">'
+    +(isNew?"":'<button class="btn del" data-act="delete">Delete</button>')
+    +'<button class="btn save" data-act="save">Save</button></div>';
+  const sh=document.getElementById("sheet");
+  sh.innerHTML='<div class="grab"></div><h3>'+title+'</h3>'+body;
+  sh.classList.add("on"); document.getElementById("bd").classList.add("on");
+}
+function closeSheet(){
+  document.getElementById("sheet").classList.remove("on");
+  document.getElementById("bd").classList.remove("on");
+  editing=null;
+}
+function commit(){
+  if(!editing)return;
+  const sh=document.getElementById("sheet");
+  sh.querySelectorAll("[data-f]").forEach(el=>{
+    const k=el.dataset.f;
+    editing.item[k] = (el.type==="number") ? (Number(el.value)||0) : el.value;
+  });
+  const key = editing.kind==="income"?"incomes": editing.kind==="bill"?"bills":"debts";
+  const arr = D[key].slice();
+  const idx = arr.findIndex(x=>x.id===editing.item.id);
+  if(idx>=0) arr[idx]=editing.item; else arr.push(editing.item);
+  D[key]=arr; save(); closeSheet(); render();
+}
+
+function readFit(){
+  document.querySelectorAll("[data-fit]").forEach(el=>{
+    const k=el.dataset.fit;
+    F[k] = (el.type==="number"||k==="split") ? (Number(el.value)||0) : el.value;
+  });
+}
+
+/* ── events ── */
+document.addEventListener("click",e=>{
+  const nav=e.target.closest("nav button");
+  if(nav){ tap(); tab=nav.dataset.tab; render(); return; }
+  const wk=e.target.closest("[data-week]");
+  if(wk){ tap(); const i=wk.dataset.week;
+    D.open["w"+i] = !(D.open["w"+i]!==undefined?D.open["w"+i]:(i==="0"));
+    save(); render(); return; }
+  const ed=e.target.closest("[data-edit]");
+  if(ed){ tap(); openSheet(ed.dataset.edit, ed.dataset.id); return; }
+  const act=e.target.closest("[data-act]");
+  if(act){
+    tap();
+    if(act.dataset.act==="save") commit();
+    else if(act.dataset.act==="delete"){
+      const key=editing.kind==="income"?"incomes":editing.kind==="bill"?"bills":"debts";
+      D[key]=D[key].filter(x=>x.id!==editing.item.id); save(); closeSheet(); render();
+    }
+    return;
+  }
+  const go=e.target.closest("[data-fitgo]");
+  if(go){ tap(); readFit(); F.scanned=true; F.pick=null; render(); return; }
+  const pk=e.target.closest("[data-pick]");
+  if(pk){ tap(); readFit(); F.pick=+pk.dataset.pick; render(); return; }
+  const fa=e.target.closest("[data-fitadd]");
+  if(fa){
+    tap(); readFit();
+    const n=Math.max(1,+F.split||1), per=(+F.amount||0)/n;
+    const rows=fitScan(), r=rows[F.pick]||fitBest(rows);
+    if(r&&per>0){
+      const label=(F.name||"Unplanned payment").trim();
+      for(let k=0;k<n;k++){
+        D.bills.push({id:uid(), name:label+(n>1?" ("+(k+1)+" of "+n+")":""),
+          amount:per, freq:"once", anchor:toISO(addDays(r.from,k*7))});
+      }
+      F={name:"",amount:0,by:"",split:1,scanned:false,pick:null};
+      save(); tab="plan"; render();
+    }
+    return;
+  }
+  if(e.target.id==="bd"){ closeSheet(); return; }
+  if(e.target.closest("[data-reset]")){ tap(); D=seed(); save(); render(); return; }
+  if(e.target.closest("[data-clear]")){ tap();
+    D={incomes:[],bills:[],debts:[],settings:D.settings,open:{}}; save(); render(); return; }
+});
+document.addEventListener("change",e=>{
+  const s=e.target.closest("[data-set]");
+  if(s){ const k=s.dataset.set;
+    D.settings[k] = s.tagName==="SELECT" ? (k==="weekStart"?Number(s.value):s.value)
+      : (k==="weeks" ? Math.max(1,Math.min(52,Number(s.value)||12)) : (Number(s.value)||0));
+    if(k==="openingCash") D.settings.cashUpdated=toISO(new Date());
+    save(); render(); }
+});
+document.addEventListener("toggle",e=>{
+  if(e.target.id==="setupBox"){ D.open.setup=e.target.open; save(); }
+},true);
+
+if("serviceWorker" in navigator && location.protocol==="https:"){
+  navigator.serviceWorker.register("sw.js").catch(()=>{});
+}
+boot();
+</script>
