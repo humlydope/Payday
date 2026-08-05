@@ -200,6 +200,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
+const VERSION="1.2";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -387,6 +388,14 @@ function viewPlan(){
     +setRow("Safety floor","floor",S.floor)
     +setRow("Extra off debt each week","extraDebt",S.extraDebt)
     +setRow("Weeks to show","weeks",S.weeks,1)
+    +'<div class="setrow"><label>Your numbers, saved to a file</label></div>'
+    +'<div style="display:flex;gap:8px;padding-bottom:12px">'
+    +'<button class="ghost" data-backup="1" style="margin:0">Back up</button>'
+    +'<button class="ghost" data-restore="1" style="margin:0">Restore</button></div>'
+    +'<input type="file" id="restoreFile" accept="application/json,.json" style="display:none">'
+    +'<div class="setrow"><label>Version '+VERSION+'</label>'
+    +'<button class="ghost" data-update="1" style="width:auto;margin:0;padding:9px 14px">'
+    +'Check for update</button></div>'
     +'</details>';
 
   if(sm.free<0) h+='<div class="empty" style="border-color:var(--rose);color:var(--rose);text-align:left">'
@@ -578,7 +587,7 @@ function render(){
     b.classList.toggle("on",b.dataset.tab===tab));
   const names=["Sunday","Monday","","","","Friday","Saturday"];
   const eb=document.getElementById("eyebrow");
-  if(eb) eb.textContent="Week starts "+(names[(D.settings.weekStart===undefined?1:+D.settings.weekStart)]||"Monday");
+  if(eb) eb.textContent="Week starts "+(names[(D.settings.weekStart===undefined?1:+D.settings.weekStart)]||"Monday")+" · v"+VERSION;
   window.scrollTo({top:0});
 }
 
@@ -647,6 +656,31 @@ function readFit(){
   });
 }
 
+function backup(){
+  try{
+    const blob=new Blob([JSON.stringify(D,null,2)],{type:"application/json"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download="payday-backup-"+toISO(new Date())+".json";
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500);
+  }catch(e){ alert("Couldn't save the backup file."); }
+}
+function restore(file){
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const p=JSON.parse(r.result);
+      if(!p||!p.settings) throw 0;
+      const base=seed();
+      D=Object.assign(base,p);
+      D.settings=Object.assign(base.settings,p.settings);
+      save(); render();
+    }catch(e){ alert("That file doesn't look like a Payday backup."); }
+  };
+  r.readAsText(file);
+}
+
 /* ── events ── */
 document.addEventListener("click",e=>{
   const nav=e.target.closest("nav button");
@@ -687,12 +721,29 @@ document.addEventListener("click",e=>{
     }
     return;
   }
+  if(e.target.closest("[data-backup]")){ tap(); backup(); return; }
+  if(e.target.closest("[data-restore]")){ tap();
+    const f=document.getElementById("restoreFile"); if(f) f.click(); return; }
+  if(e.target.closest("[data-update]")){
+    tap();
+    if("serviceWorker" in navigator){
+      navigator.serviceWorker.getRegistration()
+        .then(r=>r&&r.update()).catch(()=>{})
+        .then(()=>setTimeout(()=>location.reload(),600));
+    } else location.reload();
+    return;
+  }
   if(e.target.id==="bd"){ closeSheet(); return; }
   if(e.target.closest("[data-reset]")){ tap(); D=seed(); save(); render(); return; }
   if(e.target.closest("[data-clear]")){ tap();
     D={incomes:[],bills:[],debts:[],settings:D.settings,open:{}}; save(); render(); return; }
 });
 document.addEventListener("change",e=>{
+  if(e.target.id==="restoreFile"){
+    const f=e.target.files&&e.target.files[0];
+    if(f) restore(f);
+    return;
+  }
   const s=e.target.closest("[data-set]");
   if(s){ const k=s.dataset.set;
     D.settings[k] = s.tagName==="SELECT" ? (k==="weekStart"?Number(s.value):s.value)
@@ -704,6 +755,9 @@ document.addEventListener("toggle",e=>{
   if(e.target.id==="setupBox"){ D.open.setup=e.target.open; save(); }
 },true);
 
+if(navigator.storage && navigator.storage.persist){
+  navigator.storage.persist().catch(()=>{});
+}
 if("serviceWorker" in navigator && location.protocol==="https:"){
   navigator.serviceWorker.register("sw.js").catch(()=>{});
 }
