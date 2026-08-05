@@ -239,7 +239,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="1.5";
+const VERSION="1.8";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -293,30 +293,25 @@ function occurrences(anchorISO,freq,from,to){
 /* ── data ── */
 function nextFriday(){const t=new Date();const d=new Date(t.getFullYear(),t.getMonth(),t.getDate());
   return addDays(d,(5-d.getDay()+7)%7);}
-function seed(){
-  const f=toISO(nextFriday()), f1=toISO(addDays(nextFriday(),7)), f2=toISO(addDays(nextFriday(),14));
-  return{
-    incomes:[{id:uid(),name:"Salary",amount:900,freq:"fortnightly",anchor:f},
-             {id:uid(),name:"Partner",amount:340,freq:"weekly",anchor:f}],
-    bills:[{id:uid(),name:"Partners Life",amount:350,freq:"fortnightly",anchor:f},
-           {id:uid(),name:"Auckland Council rates",amount:450,freq:"quarterly",anchor:f},
-           {id:uid(),name:"Mum allowance",amount:200,freq:"monthly",anchor:f1},
-           {id:uid(),name:"Power",amount:180,freq:"monthly",anchor:f2}],
-    debts:[{id:uid(),name:"Credit card",balance:4200,apr:20.95,minPayment:120,freq:"monthly",anchor:f1}],
-    spend:[],
-    settings:{weeks:12,floor:200,extraDebt:0,openingCash:0,strategy:"avalanche",weekStart:1,cashUpdated:"",cur:"NZD",fx:{}},
-    open:{}
-  };
+function blank(){
+  return {incomes:[],bills:[],debts:[],spend:[],
+    settings:{weeks:12,floor:200,extraDebt:0,openingCash:0,strategy:"avalanche",
+      weekStart:1,cashUpdated:"",cur:"NZD",fx:{}},
+    open:{}};
 }
-let D=seed(), tab="plan", ready=false;
+let D=blank(), tab="plan", ready=false;
 
 async function boot(){
   const raw=await store.get("payday:v1");
-  if(raw){ try{ const p=JSON.parse(raw);
-    if(p&&p.settings){ const base=seed();
-      D=Object.assign(base,p);
-      D.settings=Object.assign(base.settings,p.settings); }
-  }catch(e){} }
+  if(raw){
+    try{ const p=JSON.parse(raw);
+      if(p&&p.settings){ const base=blank();
+        D=Object.assign(base,p);
+        D.settings=Object.assign(base.settings,p.settings); }
+    }catch(e){}
+  } else {
+    D=blank();
+  }
   ready=true; render();
 }
 let saveT;
@@ -419,6 +414,18 @@ function viewPlan(){
         low.from?"week of "+sDate(low.from):"")
     +'</div>';
 
+  if(!D.incomes.length && !D.bills.length && !D.debts.length){
+    return h+'<div class="cut" style="margin-top:4px">'
+      +'<h4>Three things and it starts working</h4>'
+      +'<div class="item"><b>1.</b> Put what you have right now in the box above.</div>'
+      +'<div class="item"><b>2.</b> On the Bills tab, add what comes in and what goes out. '
+      +'Include the yearly and quarterly ones — rates, insurance, rego.</div>'
+      +'<div class="item"><b>3.</b> Come back here. You\'ll get a week-by-week plan and a '
+      +'figure for what\'s actually free to spend.</div>'
+      +'<button class="btn save" data-goto="money" style="width:100%;margin-top:14px">'
+      +'Add my income and bills</button></div>';
+  }
+
   h+='<details class="setup"'+(D.open.setup?" open":"")+' id="setupBox"><summary>Your numbers</summary>'
     +'<div class="setrow"><label>Week starts on</label>'
     +'<select data-set="weekStart" style="width:140px">'
@@ -498,8 +505,7 @@ function viewMoney(){
     +'<p class="sec-note">Put the yearly and quarterly ones in too — rates, insurance, rego. They get spread into your weekly set-aside.</p>';
   h+=D.bills.length?D.bills.map(i=>card(i,"bill")).join(""):'<div class="empty">No bills yet.</div>';
   h+='<button class="add" data-edit="bill" data-id="new">+ Add bill</button>';
-  h+='<button class="ghost" data-reset="1">Start again with the example numbers</button>';
-  h+='<button class="ghost" data-clear="1">Clear everything</button>';
+  h+='<button class="ghost" data-clear="1">Clear everything and start over</button>';
   return h;
 }
 
@@ -907,7 +913,7 @@ function restore(file){
     try{
       const p=JSON.parse(r.result);
       if(!p||!p.settings) throw 0;
-      const base=seed();
+      const base=blank();
       D=Object.assign(base,p);
       D.settings=Object.assign(base.settings,p.settings);
       save(); render();
@@ -984,6 +990,8 @@ document.addEventListener("click",e=>{
     }
     return;
   }
+  const gt=e.target.closest("[data-goto]");
+  if(gt){ tap(); tab=gt.dataset.goto; render(true); return; }
   const chip=e.target.closest("[data-cat]");
   if(chip){ tap(); readSpend(); SP.cat=chip.dataset.cat; render(); return; }
   const per=e.target.closest("[data-per]");
@@ -1030,9 +1038,11 @@ document.addEventListener("click",e=>{
     return;
   }
   if(e.target.id==="bd"){ closeSheet(); return; }
-  if(e.target.closest("[data-reset]")){ tap(); D=seed(); save(); render(); return; }
   if(e.target.closest("[data-clear]")){ tap();
-    D={incomes:[],bills:[],debts:[],spend:[],settings:D.settings,open:{}}; save(); render(); return; }
+    if(confirm("Wipe every income, bill, debt and spending entry on this phone?")){
+      D=blank(); save(); render(true);
+    }
+    return; }
 });
 document.addEventListener("change",e=>{
   if(e.target.dataset.rate!==undefined){
