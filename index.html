@@ -239,7 +239,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="1.4";
+const VERSION="1.5";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -304,7 +304,7 @@ function seed(){
            {id:uid(),name:"Power",amount:180,freq:"monthly",anchor:f2}],
     debts:[{id:uid(),name:"Credit card",balance:4200,apr:20.95,minPayment:120,freq:"monthly",anchor:f1}],
     spend:[],
-    settings:{weeks:12,floor:200,extraDebt:0,openingCash:0,strategy:"avalanche",weekStart:1,cashUpdated:""},
+    settings:{weeks:12,floor:200,extraDebt:0,openingCash:0,strategy:"avalanche",weekStart:1,cashUpdated:"",cur:"NZD",fx:{}},
     open:{}
   };
 }
@@ -621,6 +621,21 @@ function viewFit(){
   return h;
 }
 
+const CURRENCIES=[["NZD","$"],["AUD","A$"],["JPY","¥"],["USD","US$"],["EUR","€"],["GBP","£"],
+  ["HKD","HK$"],["SGD","S$"],["THB","฿"],["KRW","₩"],["CNY","¥"],["TWD","NT$"],
+  ["MYR","RM"],["IDR","Rp"],["VND","₫"],["PHP","₱"],["FJD","FJ$"]];
+const curSym=c=>{const f=CURRENCIES.find(x=>x[0]===c);return f?f[1]:"$";};
+const activeCur=()=>D.settings.cur||"NZD";
+const activeRate=()=>{
+  const c=activeCur();
+  if(c==="NZD") return 1;
+  return Number((D.settings.fx||{})[c])||0;
+};
+function foreign(n,c){
+  const v=Math.abs(n);
+  return curSym(c)+(v%1?v.toFixed(2):Math.round(v).toLocaleString("en-NZ"));
+}
+
 /* ── spending ── */
 const CATS=[
   ["Groceries","#3FD0AE"],["Takeaway & coffee","#E8B15C"],["Transport & fuel","#5EC7F0"],
@@ -674,11 +689,25 @@ function viewSpend(){
   const list=(D.spend||[]).slice().sort((a,b)=> a.date<b.date?1: a.date>b.date?-1: 0);
   const S=D.settings;
 
+  const cur=activeCur(), rate=activeRate(), away=(cur!=="NZD");
+
   let h='<div class="quick"><div class="lbl" style="font-family:var(--mono);font-size:10px;'
     +'letter-spacing:.16em;color:var(--dim);text-transform:uppercase">What did you spend?</div>'
-    +'<div class="qrow"><span class="cur">$</span>'
+    +'<div class="qrow"><span class="cur">'+curSym(cur)+'</span>'
     +'<input type="number" inputmode="decimal" data-sp="amount" value="'+esc(SP.amount)
     +'" placeholder="0.00"></div>'
+    +'<div id="fxhint" class="handnote" style="margin:-6px 0 10px;min-height:16px"></div>'
+    +'<div class="two" style="margin-bottom:12px"><div class="fl" style="margin:0">'
+    +'<label>Currency</label><select data-set="cur">'
+    +CURRENCIES.map(c=>'<option value="'+c[0]+'"'+(cur===c[0]?" selected":"")+'>'
+      +c[0]+' '+c[1]+'</option>').join("")
+    +'</select></div>'
+    +(away?'<div class="fl" style="margin:0"><label>1 NZD buys</label>'
+      +'<input type="number" inputmode="decimal" data-rate="1" value="'+(rate||"")
+      +'" placeholder="e.g. 92"></div>'
+      :'<div class="fl" style="margin:0"><label>Rate</label>'
+      +'<input type="text" value="Home currency" disabled style="color:var(--dim)"></div>')
+    +'</div>'
     +'<div class="chips">'
     +CATS.map(c=>'<button class="chip'+(SP.cat===c[0]?" on":"")+'" data-cat="'+esc(c[0])+'"'
       +(SP.cat===c[0]?' style="background:'+c[1]+';border-color:'+c[1]+'"':'')
@@ -690,8 +719,14 @@ function viewSpend(){
     +'<input type="date" data-sp="date" value="'+(SP.date||today)+'"></div></div>'
     +'<button class="btn save" data-spadd="1" style="width:100%;margin-top:14px">'
     +'Add and take it off my balance</button>'
-    +'<p class="handnote" style="margin-top:10px">Comes straight off <b>'+cash(+S.openingCash||0)
-    +'</b> in hand. Only log things that aren\'t already listed as a bill, or you\'ll count them twice.</p>'
+    +'<p class="handnote" style="margin-top:10px">'
+    +(away
+      ? 'Type the price in '+cur+'. It\'s converted and stored in NZD, so your balance, '
+        +'chart and plan all stay in one currency. '
+        +(rate?'':'<b>Put the rate in first.</b>')
+      : 'Comes straight off <b>'+cash(+S.openingCash||0)+'</b> in hand. Only log things that '
+        +'aren\'t already listed as a bill, or you\'ll count them twice.')
+    +'</p>'
     +'</div>';
 
   /* chart */
@@ -733,7 +768,8 @@ function viewSpend(){
       }
       h+='<div class="ent"><span class="swatch" style="background:'+catColor(s.cat)+'"></span>'
         +'<span class="eb"><b>'+esc(s.cat)+'</b>'
-        +(s.note?'<span>'+esc(s.note)+'</span>':'')+'</span>'
+        +(s.note||s.fx?'<span>'+(s.fx?foreign(s.fx.orig,s.fx.cur)+(s.note?' · ':''):'')
+          +esc(s.note||"")+'</span>':'')+'</span>'
         +'<span class="ea">'+cash(+s.amount||0)+'</span>'
         +'<button class="x" data-spdel="'+s.id+'" title="Remove">×</button></div>';
     });
@@ -880,6 +916,23 @@ function restore(file){
   r.readAsText(file);
 }
 
+function updateFxHint(){
+  const el=document.getElementById("fxhint");
+  if(!el) return;
+  const cur=activeCur();
+  if(cur==="NZD"){ el.textContent=""; return; }
+  const aEl=document.querySelector('[data-sp="amount"]');
+  const rEl=document.querySelector('[data-rate]');
+  const a=aEl?Number(aEl.value)||0:0;
+  const r=rEl?Number(rEl.value)||0:0;
+  el.innerHTML = (a>0&&r>0)
+    ? '= <b style="color:var(--teal)">'+cash(a/r)+' NZD</b>'
+    : (r>0?'':'<span style="color:var(--sand)">Enter the rate below</span>');
+}
+document.addEventListener("input",e=>{
+  if(e.target.dataset.sp==="amount" || e.target.dataset.rate!==undefined) updateFxHint();
+});
+
 /* ── events ── */
 document.addEventListener("click",e=>{
   const nav=e.target.closest("nav button");
@@ -938,12 +991,17 @@ document.addEventListener("click",e=>{
   const spa=e.target.closest("[data-spadd]");
   if(spa){
     tap(); readSpend();
-    const amt=Number(SP.amount)||0;
-    if(amt<=0){ alert("Put an amount in first."); return; }
+    const typed=Number(SP.amount)||0;
+    if(typed<=0){ alert("Put an amount in first."); return; }
+    const cur=activeCur(), rate=activeRate();
+    if(cur!=="NZD" && rate<=0){ alert("Put the exchange rate in first — how many "+cur+" one NZD buys."); return; }
+    const nzd = cur==="NZD" ? typed : typed/rate;
     if(!D.spend) D.spend=[];
-    D.spend.push({id:uid(), amount:amt, cat:SP.cat, note:(SP.note||"").trim(),
-      date:SP.date||toISO(new Date())});
-    D.settings.openingCash=(+D.settings.openingCash||0)-amt;
+    const rec={id:uid(), amount:nzd, cat:SP.cat, note:(SP.note||"").trim(),
+      date:SP.date||toISO(new Date())};
+    if(cur!=="NZD") rec.fx={cur:cur, orig:typed, rate:rate};
+    D.spend.push(rec);
+    D.settings.openingCash=(+D.settings.openingCash||0)-nzd;
     D.settings.cashUpdated=toISO(new Date());
     SP.amount=""; SP.note="";
     save(); render(); return;
@@ -977,6 +1035,11 @@ document.addEventListener("click",e=>{
     D={incomes:[],bills:[],debts:[],spend:[],settings:D.settings,open:{}}; save(); render(); return; }
 });
 document.addEventListener("change",e=>{
+  if(e.target.dataset.rate!==undefined){
+    if(!D.settings.fx) D.settings.fx={};
+    D.settings.fx[activeCur()]=Number(e.target.value)||0;
+    save(); render(); return;
+  }
   if(e.target.id==="restoreFile"){
     const f=e.target.files&&e.target.files[0];
     if(f) restore(f);
@@ -987,6 +1050,7 @@ document.addEventListener("change",e=>{
     D.settings[k] = s.tagName==="SELECT" ? (k==="weekStart"?Number(s.value):s.value)
       : (k==="weeks" ? Math.max(1,Math.min(52,Number(s.value)||12)) : (Number(s.value)||0));
     if(k==="openingCash") D.settings.cashUpdated=toISO(new Date());
+    if(k==="cur") D.settings.cur=s.value;
     save(); render(); }
 });
 document.addEventListener("toggle",e=>{
