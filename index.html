@@ -105,8 +105,8 @@
     background:var(--surface);border:1px solid var(--line);border-radius:12px;
     padding:14px;margin-bottom:8px;text-align:left;min-height:62px;}
   .card:active{background:var(--surface2)}
-  .card .nm{font-size:15px;font-weight:600;}
-  .card .meta{font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:4px;}
+  .card .nm{font-size:15px;font-weight:600;display:block;}
+  .card .meta{font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:4px;display:block;}
   .card .amt{font-family:var(--mono);font-size:16px;white-space:nowrap;}
   .add{width:100%;border:1px dashed var(--line);border-radius:12px;padding:15px;
     color:var(--teal);font-family:var(--mono);font-size:13px;letter-spacing:.05em;}
@@ -259,7 +259,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="3.4 Beta";
+const VERSION="3.6 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -317,7 +317,7 @@ function blank(){
   return {incomes:[],bills:[],debts:[],spend:[],
     settings:{weeks:12,floor:200,extraDebt:0,openingCash:0,strategy:"avalanche",
       weekStart:1,cashUpdated:"",cur:"NZD",fx:{},
-      parkMode:"auto",parkAmount:0,fundStart:0,aiKeys:{}},
+      parkMode:"auto",parkAmount:0,fundStart:0,goalStart:0,aiKeys:{}},
     open:{}};
 }
 let D=blank(), tab="plan", ready=false;
@@ -355,7 +355,8 @@ function buildWeeks(nOverride){
     D.incomes.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
       ins.push({name:it.name,amount:+it.amount||0,date:d})));
     D.bills.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
-      outs.push({name:it.name,amount:+it.amount||0,date:d,lumpy:it.freq!=="weekly"})));
+      outs.push({name:it.name,amount:+it.amount||0,date:d,
+        lumpy:it.freq!=="weekly", goal:it.freq==="once"})));
     D.debts.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
       outs.push({name:it.name+" minimum",amount:+it.minPayment||0,date:d,debt:1,
         lumpy:it.freq!=="weekly"})));
@@ -518,37 +519,42 @@ function viewPlan(){
       if(!w.outs.length) h+='<div class="ln"><span class="nm dim">Nothing due</span></div>';
       w.outs.forEach(x=>h+=line(x.name,x.date,x.amount,x.debt?"sand":"","−"));
       const sm2=smoothed();
-      const fr=FP.rows[i]||{contrib:0,fromPot:0,potAfter:0,potBefore:0,shortfall:0,
-        net:0,spend:w.closing,safe:0,capped:false,wanted:0};
-      h+='<div class="action">'
-        +'<div class="lbl" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;'
-        +'color:var(--dim);text-transform:uppercase;margin-bottom:8px">The set-aside pot</div>'
-        +ln2("Pot at the start",fr.potBefore)
-        +ln2("This week\'s parking",fr.contrib,"+")
-        +ln2("Bills the pot covers",fr.fromPot,"−")
-        +ln2("Pot ends the week",fr.potAfter,"","teal")
-        +(Math.abs(fr.net)<0.5
-          ? '<div class="ln"><span class="nm">Transfer to make</span>'
-            +'<span class="amt dim">nothing — it cancels out</span></div>'
-          : ln2(fr.net>0?"Move into the pot":"Take out of the pot",Math.abs(fr.net),"","sand"))
-        +(fr.capped
-          ? '<div class="warn" style="color:var(--sand)">▲ You set '+cash(fr.wanted)
-            +' a week, but only '+cash(fr.contrib)+' is actually there to move without '
-            +'breaking your floor. Lower the park amount on the card above.</div>'
-            : '')
-        +(fr.shortfall>0.5
-          ? '<div class="warn">▲ '+cash(fr.shortfall)+' of this week\'s bills had to come out '
-            +'of everyday money — the pot didn\'t have enough in it yet.</div>'
-          : '')
-        +'<div class="divider"></div>'
-        +ln2("Total in the account",w.closing)
-        +ln2("Sitting in the pot",fr.potAfter,"−")
-        +ln2("Everyday money",fr.spend,"",fr.spend<0?"rose":"")
-        +ln2("Your floor, left sitting there",(+S.floor),"−")
-        +ln2("Safe to spend this week",fr.safe,"","teal")
-        +'<p class="note" style="margin:8px 0 0">Spending this much keeps every week ahead above '
-        +'your floor. It is lower than the balance because later weeks are living off it too.</p>'
-        +'</div>';
+      const fr=FP.rows[i]||null;
+      if(fr){
+        const potBlock=(title,o,tone)=>
+          '<div class="lbl" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;'
+          +'color:var(--dim);text-transform:uppercase;margin:2px 0 6px">'+title+'</div>'
+          +ln2("Starts at",o.before)
+          +ln2("You put in",o.in,"+")
+          +(o.due>0.5?ln2("Pays out",o.out,"−"):"")
+          +ln2("Ends the week",o.after,"",tone)
+          +(Math.abs(o.net)<0.5
+            ? '<div class="ln"><span class="nm dim">Transfer</span>'
+              +'<span class="amt dim">nothing this week</span></div>'
+            : ln2(o.net>0?"→ Move in":"← Take out",Math.abs(o.net),"","sand"));
+
+        h+='<div class="action">'
+          +potBlock("Bills float",fr.bills,"teal")
+          +(goalWeekly()>0||fr.goals.after>0.5||fr.goals.due>0.5
+            ? '<div class="divider"></div>'+potBlock("Owed to others",fr.goals,"rose")
+            : "")
+          +(fr.capped
+            ? '<div class="warn" style="color:var(--sand)">▲ You set '+cash(fr.wanted)
+              +' a week but only '+cash(fr.contrib)+' fits without breaking your floor. '
+              +'Lower the park amount above.</div>' : '')
+          +(fr.shortfall>0.5
+            ? '<div class="warn">▲ '+cash(fr.shortfall)+' of this week\'s bills came out of '
+              +'everyday money — the pots didn\'t hold enough yet.</div>' : '')
+          +'<div class="divider"></div>'
+          +ln2("Total in the account",w.closing)
+          +ln2("Sitting in the two pots",fr.potAfter,"−")
+          +ln2("Everyday money",fr.spend,"",fr.spend<0?"rose":"")
+          +ln2("Your floor, left sitting there",(+S.floor),"−")
+          +ln2("Safe to spend this week",fr.safe,"","teal")
+          +'<p class="note" style="margin:8px 0 0">Spending this much keeps every week ahead '
+          +'above your floor. It is lower than the balance because later weeks live off it too.</p>'
+          +'</div>';
+      }
       if(lowW) h+='<div class="warn">▲ Below your '+money(+S.floor)
         +' floor. Move a bill or hold back spending the week before.</div>';
       h+='</div>';
@@ -1048,47 +1054,63 @@ function foreign(n,c){
    Two constraints bound how much you can park each week:
      the pot must never go negative when a lumpy bill lands
      what's left outside the pot must never fall below your floor  */
-function autoPark(){ return smoothed().billsLumpy + smoothed().debtMin; }
+function goalWeekly(){ return goalList().reduce((a,g)=>a+g.per,0); }
+function autoPark(){
+  const s=smoothed();
+  return s.billsLumpy + s.debtMin + goalWeekly();
+}
 function parkAmount(){
   const S=D.settings;
   return S.parkMode==="manual" ? (+S.parkAmount||0) : autoPark();
 }
 function fundPlan(nOverride){
   const W=buildWeeks(nOverride), S=D.settings;
-  const fund0=+S.fundStart||0, floor=+S.floor||0, P=parkAmount();
+  const fund0=+S.fundStart||0, goal0=+S.goalStart||0, floor=+S.floor||0, P=parkAmount();
+  /* Goal money is owed to someone on a date, so it gets funded first.
+     Trimming the park amount comes out of the bills float. */
+  const needG=goalWeekly();
+  const parkG=Math.min(P,needG), parkB=Math.max(0,P-needG);
   let cum=0, n=0, minP=0, maxP=Infinity, worstFund=Infinity, worstSpend=Infinity;
-  let pot=Math.max(0,fund0);
+  let potB=Math.max(0,fund0), potG=Math.max(0,goal0);
   const rows=W.map(w=>{
     if(!w.part) n++;
-    const lumpyDue=w.outs.filter(o=>o.lumpy).reduce((a,b)=>a+b.amount,0);
-    cum += lumpyDue;
-    const wanted = w.part ? 0 : P;
-    const potBefore = pot;
+    const dueB=w.outs.filter(o=>o.lumpy&&!o.goal).reduce((a,b)=>a+b.amount,0);
+    const dueG=w.outs.filter(o=>o.goal).reduce((a,b)=>a+b.amount,0);
+    cum += dueB+dueG;
 
-    /* You can't park money that isn't there. The pot is part of your balance,
-       so it can never exceed what's left after the bills, less the floor. */
-    const maxPot = Math.max(0, w.closing - floor);
-    let contrib = wanted;
-    let fromPot = Math.min(potBefore+contrib, lumpyDue);
-    let potAfter = potBefore + contrib - fromPot;
-    let capped = false;
-    if(potAfter > maxPot){
-      contrib = Math.max(0, contrib - (potAfter - maxPot));
-      fromPot = Math.min(potBefore+contrib, lumpyDue);
-      potAfter = potBefore + contrib - fromPot;
-      capped = (contrib < wanted - 0.01);
+    let cB = w.part?0:parkB, cG = w.part?0:parkG;
+    const bB=potB, bG=potG;
+    let fromG=Math.min(bG+cG,dueG), afterG=bG+cG-fromG;
+    let fromB=Math.min(bB+cB,dueB), afterB=bB+cB-fromB;
+
+    /* neither pot can hold money the account doesn't have */
+    const maxPot=Math.max(0,w.closing-floor);
+    let capped=false;
+    if(afterG+afterB>maxPot){
+      const over=afterG+afterB-maxPot;
+      const cutB=Math.min(cB,over);          // trim the float first
+      cB-=cutB;
+      fromB=Math.min(bB+cB,dueB); afterB=bB+cB-fromB;
+      const still=afterG+afterB-maxPot;
+      if(still>0){ cG=Math.max(0,cG-still);
+        fromG=Math.min(bG+cG,dueG); afterG=bG+cG-fromG; }
+      capped=true;
     }
-    const shortfall = lumpyDue - fromPot;
-    pot = potAfter;
-    const everyday = w.closing - potAfter;
-    if(potAfter<worstFund) worstFund=potAfter;
+    potB=afterB; potG=afterG;
+    const pot=afterB+afterG;
+    const shortfall=(dueB-fromB)+(dueG-fromG);
+    const everyday=w.closing-pot;
+    if(pot<worstFund) worstFund=pot;
     if(everyday<worstSpend) worstSpend=everyday;
     if(n>0){
-      minP=Math.max(minP,(cum-fund0)/n);
-      maxP=Math.min(maxP,(w.closing-fund0+cum-floor)/n);
+      minP=Math.max(minP,(cum-fund0-goal0)/n);
+      maxP=Math.min(maxP,(w.closing-fund0-goal0+cum-floor)/n);
     }
-    return {w, contrib, wanted, capped, lumpyDue, fromPot, potBefore, potAfter, shortfall,
-      net:contrib-fromPot, spend:everyday, fund:potAfter, contribs:n};
+    return {w, contrib:cB+cG, wanted:P, capped,
+      bills:{before:bB,in:cB,out:fromB,after:afterB,due:dueB,net:cB-fromB},
+      goals:{before:bG,in:cG,out:fromG,after:afterG,due:dueG,net:cG-fromG},
+      lumpyDue:dueB+dueG, fromPot:fromB+fromG, potBefore:bB+bG, potAfter:pot,
+      shortfall, net:(cB+cG)-(fromB+fromG), spend:everyday, fund:pot, contribs:n};
   });
   /* what you can spend THIS week without any later week breaking the floor */
   let tail=Infinity;
@@ -1117,14 +1139,24 @@ function viewFundCard(){
     +'</div>';
 
   if(f.possible){
-    h+='<div class="handnote">Anything from <b>'+cash(f.minP)+'</b> to <b>'+cash(f.maxP)
-      +'</b> a week works. Below that and the pot runs dry before a bill lands. Above it and '
-      +'your spending money drops under the '+money(+S.floor)+' floor.</div>'
-      +'<div class="seg" style="margin-top:10px">'
-      +'<button data-setpark="'+f.minP.toFixed(2)+'">Lowest safe</button>'
-      +'<button data-setpark="'+f.auto.toFixed(2)+'">True cost</button>'
-      +(isFinite(f.maxP)?'<button data-setpark="'+f.maxP.toFixed(2)+'">Highest safe</button>':'')
-      +'</div>';
+    const sm2=smoothed(), gw=goalWeekly(), bw=sm2.billsLumpy+sm2.debtMin;
+    h+='<div class="handnote"><b>Recommended: '+cash(f.auto)+' a week</b>, and it is worth '
+      +'splitting it across two accounts so goal money can\'t get spent by accident.</div>'
+      +'<div style="margin:10px 0 4px">'
+      +'<div class="ln"><span class="nm">Bills float — rates, insurance, power</span>'
+      +'<span class="amt sand">'+cash(bw)+'</span></div>'
+      +(gw>0?'<div class="ln"><span class="nm">Owed to others — what you are saving for</span>'
+        +'<span class="amt rose">'+cash(gw)+'</span></div>':'')
+      +'</div>'
+      +'<div class="seg" style="margin-top:8px">'
+      +'<button data-setpark="'+f.auto.toFixed(2)+'">Use '+cash(f.auto)+'</button>'
+      +'<button data-setpark="'+f.minP.toFixed(2)+'">Bare minimum '+cash(f.minP)+'</button>'
+      +'</div>'
+      +'<div class="handnote" style="margin-top:8px">'
+      +(gw>0?'Trimming the park amount always comes out of the bills float first — money owed '
+        +'on a date is funded before anything else. ':'')
+      +'Anything from '+cash(f.minP)+' to '+cash(f.maxP)+' a week is survivable, but going above '
+      +'the recommended figure just locks money away early.</div>';
   } else {
     h+='<div class="handnote" style="color:var(--rose)">No amount works right now. The bills '
       +'need <b>'+cash(f.minP)+'</b> a week but your buffer only allows <b>'+cash(Math.max(0,f.maxP))
@@ -1132,8 +1164,12 @@ function viewFundCard(){
       +'or start the pot with more in it.</div>';
   }
 
-  h+='<div class="setrow" style="margin-top:10px"><label>Already set aside</label>'
-    +'<input type="number" inputmode="decimal" data-set="fundStart" value="'+(+S.fundStart||0)+'"></div>';
+  h+='<div class="setrow" style="margin-top:10px"><label>Already in the bills float</label>'
+    +'<input type="number" inputmode="decimal" data-set="fundStart" value="'+(+S.fundStart||0)+'"></div>'
+    +(goalWeekly()>0
+      ? '<div class="setrow"><label>Already saved towards goals</label>'
+        +'<input type="number" inputmode="decimal" data-set="goalStart" value="'+(+S.goalStart||0)+'"></div>'
+      : '');
 
   if(f.worstFund<-0.5)
     h+='<div class="warn">▲ The pot goes '+cash(-f.worstFund)+' short at its worst. '
@@ -1627,12 +1663,13 @@ plan:["Weekly plan","This is the whole point of the app: what lands, what leaves
 ["Money I have right now","Your bank balance plus cash in your pocket. Every figure below is counted from this one, so a stale number here makes everything else wrong. Update it whenever you check your bank."],
 ["Safety floor","A line you don't spend past, not a weekly payment. The same money sits in your account week after week — it never leaves and never needs topping up. Set it to zero if you don't want one. A small cushion of $100 to $300 covers a mistimed direct debit or a bill that's bigger than usual. Don't go large while you're carrying a credit card, though: cash sitting idle at 20% interest is costing you real money that would be better off the balance."],
 ["Income / week","Your pay averaged across the whole cycle. If you're paid fortnightly, this is roughly half of each payday, so you can compare it against weekly costs."],
-["Park each week","Bills that don't come weekly — rates, insurance, rego — still cost you every week. This is what to move into a separate account so the money's there when they land."],
+["Park each week","Bills that don't come weekly — rates, insurance, rego — plus anything you're saving towards, all converted to what they cost per week. Move it into a separate account so the money is there when each one lands. The recommended figure is the true cost; parking more than that doesn't make you safer, it just locks money away early."],
 ["Free to spend","Your repeatable weekly allowance — income minus every bill, debt minimum and the parking, averaged across the cycle. This is the one you can live on every week."],
 ["Safe to spend this week","Different from the figure above. It is what you can spend in that particular week while every week after it still clears your floor. It is always lower than the balance sitting in your account, because later weeks are living off that balance too. Spend it and the following weeks recalculate downward — that is correct, not a bug."],
 ["Lowest point","The tightest your spending money gets over the weeks shown. This ignores the parked pot, because that money is already promised. If this is red, trouble is coming and you can see it early."],
 ["Pay week and off week","A thick teal bar means pay lands that week. A thin bar means it doesn't. An amber bar is the part-week you're standing in right now."],
-["Already set aside","How much is really in the pot today. The app can't see your bank, so this is the one place reality gets in. Everything after it is a forecast that assumes you actually make the transfers. Correct it whenever it drifts."],
+["Two pots","The bills float covers rates, insurance, power — money that flows in and out constantly. The owed-to-others pot holds what you are saving for a date: a tax bill, money owed to someone. Keep them in separate bank accounts. The second one you never touch, so it can't quietly get spent on a big power bill."],
+["Already set aside","How much is really in each pot today. The app can't see your bank, so this is the one place reality gets in. Everything after it is a forecast that assumes you actually make the transfers. Correct it whenever it drifts."],
 ["A negative pot","Means a bill lands before you've saved enough for it, so it comes out of your everyday money instead. Raise the weekly amount, start the pot with more in it, or move the bill to a later week."]]],
 
 spend:["Spending","Log what you spend day to day. It comes straight off your balance so the plan stays honest without you re-typing anything.",[
@@ -1816,8 +1853,7 @@ document.addEventListener("click",e=>{
     const t=new Date(), today=new Date(t.getFullYear(),t.getMonth(),t.getDate());
     const wks=Math.floor((by-today)/(7*86400000));
     D.settings.weeks=Math.max(+D.settings.weeks||12, Math.min(104, wks+2));
-    D.settings.parkMode="manual";
-    D.settings.parkAmount=Math.round(((+D.settings.parkAmount||autoPark())+G.phases[0].perWeek)*100)/100;
+    D.settings.parkMode="auto";     // autoPark now counts goals, so let it recompute
     F={name:"",amount:0,by:"",split:1,scanned:false,pick:null,mode:F.mode};
     save(); tab="plan"; render(true);
     return;
