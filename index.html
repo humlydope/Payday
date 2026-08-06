@@ -259,7 +259,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="2.8";
+const VERSION="3.0";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -499,24 +499,30 @@ function viewPlan(){
       if(!w.outs.length) h+='<div class="ln"><span class="nm dim">Nothing due</span></div>';
       w.outs.forEach(x=>h+=line(x.name,x.date,x.amount,x.debt?"sand":"","−"));
       const sm2=smoothed();
-      const fr=FP.rows[i]||{contrib:0,fromPot:0,potAfter:0,shortfall:0,spend:w.closing};
-      const yours=Math.max(0,fr.spend-(+S.floor));
+      const fr=FP.rows[i]||{contrib:0,fromPot:0,potAfter:0,potBefore:0,shortfall:0,
+        net:0,spend:w.closing,safe:0};
       h+='<div class="action">'
         +'<div class="lbl" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;'
         +'color:var(--dim);text-transform:uppercase;margin-bottom:8px">The set-aside pot</div>'
         +ln2("Pot at the start",fr.potBefore)
-        +ln2("You move in",fr.contrib,"+")
-        +ln2("Paid out to bills",fr.fromPot,"−")
-        +'<div class="divider"></div>'
+        +ln2("This week's parking",fr.contrib,"+")
+        +ln2("Bills the pot covers",fr.fromPot,"−")
         +ln2("Pot ends the week",fr.potAfter,"","teal")
         +'<div class="divider"></div>'
-        +ln2("Everyday money left",fr.spend)
-        +ln2("Held back as your floor",(+S.floor),"−")
-        +ln2("Yours to spend",yours,"","teal")
+        +(Math.abs(fr.net)<0.5
+          ? '<div class="ln"><span class="nm">Transfer to make</span>'
+            +'<span class="amt dim">nothing — it cancels out</span></div>'
+          : ln2(fr.net>0?"Move into the pot":"Take out of the pot",Math.abs(fr.net),"","sand"))
         +(fr.shortfall>0.5
           ? '<div class="warn">▲ '+cash(fr.shortfall)+' of this week\'s bills had to come out '
             +'of everyday money — the pot didn\'t have enough in it yet.</div>'
           : '')
+        +'<div class="divider"></div>'
+        +ln2("In the account at week\'s end",fr.spend)
+        +ln2("Your floor, left sitting there",(+S.floor),"−")
+        +ln2("Safe to spend this week",fr.safe,"","teal")
+        +'<p class="note" style="margin:8px 0 0">Spending this much keeps every week ahead above '
+        +'your floor. It is lower than the balance because later weeks are living off it too.</p>'
         +'</div>';
       if(lowW) h+='<div class="warn">▲ Below your '+money(+S.floor)
         +' floor. Move a bill or hold back spending the week before.</div>';
@@ -790,8 +796,15 @@ function fundPlan(){
       maxP=Math.min(maxP,(w.closing-fund0+cum-floor)/n);
     }
     return {w, contrib, lumpyDue, fromPot, potBefore, potAfter, shortfall,
-      spend:everyday, fund:potAfter, contribs:n};
+      net:contrib-fromPot, spend:everyday, fund:potAfter, contribs:n};
   });
+  /* what you can spend THIS week without any later week breaking the floor */
+  let tail=Infinity;
+  for(let i=rows.length-1;i>=0;i--){
+    tail=Math.min(tail, rows[i].spend);
+    rows[i].safe=Math.max(0, tail-floor);
+    rows[i].binding=(rows[i].spend===tail);
+  }
   minP=Math.max(0,minP);
   const ideal=fund0+P*n-cum;
   return {rows, P, minP, maxP, fund0, worstFund, worstSpend, ideal,
@@ -1320,10 +1333,11 @@ async function sendAI(){
 const HELP={
 plan:["Weekly plan","This is the whole point of the app: what lands, what leaves, and what's left, week by week.",[
 ["Money I have right now","Your bank balance plus cash in your pocket. Every figure below is counted from this one, so a stale number here makes everything else wrong. Update it whenever you check your bank."],
-["Safety floor","The lowest you're willing to let your spending money get. Not zero — leave room for a surprise. Anything that would push you under it turns red."],
+["Safety floor","A line you don't spend past, not a weekly payment. The same money sits in your account week after week — it never leaves and never needs topping up. Set it to zero if you don't want one. A small cushion of $100 to $300 covers a mistimed direct debit or a bill that's bigger than usual. Don't go large while you're carrying a credit card, though: cash sitting idle at 20% interest is costing you real money that would be better off the balance."],
 ["Income / week","Your pay averaged across the whole cycle. If you're paid fortnightly, this is roughly half of each payday, so you can compare it against weekly costs."],
 ["Park each week","Bills that don't come weekly — rates, insurance, rego — still cost you every week. This is what to move into a separate account so the money's there when they land."],
-["Free to spend","What's genuinely yours after every bill, every debt minimum, and the parking. Spend this without breaking anything."],
+["Free to spend","Your repeatable weekly allowance — income minus every bill, debt minimum and the parking, averaged across the cycle. This is the one you can live on every week."],
+["Safe to spend this week","Different from the figure above. It is what you can spend in that particular week while every week after it still clears your floor. It is always lower than the balance sitting in your account, because later weeks are living off that balance too. Spend it and the following weeks recalculate downward — that is correct, not a bug."],
 ["Lowest point","The tightest your spending money gets over the weeks shown. This ignores the parked pot, because that money is already promised. If this is red, trouble is coming and you can see it early."],
 ["Pay week and off week","A thick teal bar means pay lands that week. A thin bar means it doesn't. An amber bar is the part-week you're standing in right now."],
 ["Already set aside","How much is really in the pot today. The app can't see your bank, so this is the one place reality gets in. Everything after it is a forecast that assumes you actually make the transfers. Correct it whenever it drifts."],
