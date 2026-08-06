@@ -259,7 +259,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="3.3";
+const VERSION="3.4";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -519,25 +519,31 @@ function viewPlan(){
       w.outs.forEach(x=>h+=line(x.name,x.date,x.amount,x.debt?"sand":"","−"));
       const sm2=smoothed();
       const fr=FP.rows[i]||{contrib:0,fromPot:0,potAfter:0,potBefore:0,shortfall:0,
-        net:0,spend:w.closing,safe:0};
+        net:0,spend:w.closing,safe:0,capped:false,wanted:0};
       h+='<div class="action">'
         +'<div class="lbl" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;'
         +'color:var(--dim);text-transform:uppercase;margin-bottom:8px">The set-aside pot</div>'
         +ln2("Pot at the start",fr.potBefore)
-        +ln2("This week's parking",fr.contrib,"+")
+        +ln2("This week\'s parking",fr.contrib,"+")
         +ln2("Bills the pot covers",fr.fromPot,"−")
         +ln2("Pot ends the week",fr.potAfter,"","teal")
-        +'<div class="divider"></div>'
         +(Math.abs(fr.net)<0.5
           ? '<div class="ln"><span class="nm">Transfer to make</span>'
             +'<span class="amt dim">nothing — it cancels out</span></div>'
           : ln2(fr.net>0?"Move into the pot":"Take out of the pot",Math.abs(fr.net),"","sand"))
+        +(fr.capped
+          ? '<div class="warn" style="color:var(--sand)">▲ You set '+cash(fr.wanted)
+            +' a week, but only '+cash(fr.contrib)+' is actually there to move without '
+            +'breaking your floor. Lower the park amount on the card above.</div>'
+            : '')
         +(fr.shortfall>0.5
           ? '<div class="warn">▲ '+cash(fr.shortfall)+' of this week\'s bills had to come out '
             +'of everyday money — the pot didn\'t have enough in it yet.</div>'
           : '')
         +'<div class="divider"></div>'
-        +ln2("In the account at week\'s end",fr.spend)
+        +ln2("Total in the account",w.closing)
+        +ln2("Sitting in the pot",fr.potAfter,"−")
+        +ln2("Everyday money",fr.spend,"",fr.spend<0?"rose":"")
         +ln2("Your floor, left sitting there",(+S.floor),"−")
         +ln2("Safe to spend this week",fr.safe,"","teal")
         +'<p class="note" style="margin:8px 0 0">Spending this much keeps every week ahead above '
@@ -1056,10 +1062,22 @@ function fundPlan(nOverride){
     if(!w.part) n++;
     const lumpyDue=w.outs.filter(o=>o.lumpy).reduce((a,b)=>a+b.amount,0);
     cum += lumpyDue;
-    const contrib = w.part ? 0 : P;
+    const wanted = w.part ? 0 : P;
     const potBefore = pot;
-    const fromPot = Math.min(potBefore+contrib, lumpyDue);
-    const potAfter = potBefore + contrib - fromPot;
+
+    /* You can't park money that isn't there. The pot is part of your balance,
+       so it can never exceed what's left after the bills, less the floor. */
+    const maxPot = Math.max(0, w.closing - floor);
+    let contrib = wanted;
+    let fromPot = Math.min(potBefore+contrib, lumpyDue);
+    let potAfter = potBefore + contrib - fromPot;
+    let capped = false;
+    if(potAfter > maxPot){
+      contrib = Math.max(0, contrib - (potAfter - maxPot));
+      fromPot = Math.min(potBefore+contrib, lumpyDue);
+      potAfter = potBefore + contrib - fromPot;
+      capped = (contrib < wanted - 0.01);
+    }
     const shortfall = lumpyDue - fromPot;
     pot = potAfter;
     const everyday = w.closing - potAfter;
@@ -1069,7 +1087,7 @@ function fundPlan(nOverride){
       minP=Math.max(minP,(cum-fund0)/n);
       maxP=Math.min(maxP,(w.closing-fund0+cum-floor)/n);
     }
-    return {w, contrib, lumpyDue, fromPot, potBefore, potAfter, shortfall,
+    return {w, contrib, wanted, capped, lumpyDue, fromPot, potBefore, potAfter, shortfall,
       net:contrib-fromPot, spend:everyday, fund:potAfter, contribs:n};
   });
   /* what you can spend THIS week without any later week breaking the floor */
