@@ -259,7 +259,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="3.1";
+const VERSION="3.3";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -634,17 +634,45 @@ function fitBest(rows){
       || null;
 }
 /* ── how much you really spend, from what you've logged ── */
+/* How often each kind of spending typically happens, per week. Used only while
+   there's too little history to measure the real rate — a coffee logged once is
+   probably a habit; a $200 grocery shop is not a daily event. */
+const CAT_PER_WEEK={
+  "Groceries":1.5, "Takeaway & coffee":6, "Transport & fuel":2, "Household":0.5,
+  "Kids":1, "Health":0.3, "Fun & going out":1, "Clothes":0.25, "Other":1
+};
 function avgSpend(){
   const list=(D.spend||[]).filter(s=>s.cat!==DEBT_CAT);
-  if(!list.length) return {avg:0, days:0, enough:false};
+  if(!list.length) return {avg:0, days:0, conf:"none", label:"nothing logged yet", enough:false};
   const dates=list.map(s=>parseISO(s.date)).filter(Boolean).sort((a,b)=>a-b);
   const t=new Date(), today=new Date(t.getFullYear(),t.getMonth(),t.getDate());
   const days=Math.max(1,Math.round((today-dates[0])/86400000)+1);
-  const window=Math.min(days,56);
+
+  /* what you've actually spent, per week */
+  const window=Math.max(7,Math.min(days,56));
   const from=addDays(today,-(window-1));
   const inWin=list.filter(s=>{const d=parseISO(s.date);return d&&d>=from;});
-  const total=inWin.reduce((a,b)=>a+(+b.amount||0),0);
-  return {avg:(total/window)*7, days, enough:days>=21};
+  const observed=(inWin.reduce((a,b)=>a+(+b.amount||0),0)/window)*7;
+
+  /* what it probably costs a week, judging by the kind of thing it is */
+  const byCat={};
+  list.forEach(s=>{ const k=s.cat||"Other";
+    if(!byCat[k]) byCat[k]={sum:0,count:0};
+    byCat[k].sum+=(+s.amount||0); byCat[k].count++; });
+  let typical=0;
+  Object.keys(byCat).forEach(k=>{
+    const perEvent=byCat[k].sum/byCat[k].count;
+    typical+=perEvent*(CAT_PER_WEEK[k]!==undefined?CAT_PER_WEEK[k]:1);
+  });
+
+  /* lean on the pattern early, on the measurement once there's enough of it */
+  const w=Math.min(1,days/21);
+  const avg=w*observed+(1-w)*typical;
+  const conf = days>=21 ? "solid" : days>=7 ? "getting there" : "rough";
+  return {avg, observed, typical, days, conf, enough:days>=21,
+    label: conf==="solid" ? "solid — "+days+" days logged"
+         : conf==="getting there" ? "getting there — "+days+" days logged"
+         : "rough — "+days+(days===1?" day":" days")+" logged, so mostly estimated from the kind of spending it is"};
 }
 
 /* ── goal scheduling ─────────────────────────────────────
@@ -665,11 +693,12 @@ function goalSchedule(amount, dueISO){
   const cap=rows.map(r=>r.spend - floor - sp.avg*r.contribs);
   const n=rows.length;
 
-  /* If the account already dips under the floor with no saving at all, no
-     schedule can fix that. Say so instead of inventing one. */
-  const brk=rows.findIndex((r,j)=>cap[j]<-0.5);
-  if(brk>=0) return {baselineBreak:{week:rows[brk].w, short:-cap[brk]},
-    sp, amount, due, totalWeeks, tooSoon:false, feasible:false, phases:[]};
+  /* Weeks that already sit under the floor simply can't carry any saving.
+     They contribute nothing and the plan starts after them — not a wall. */
+  const dips=rows.filter((r,j)=>cap[j]<-0.5);
+  const firstDip=dips.length?dips[0]:null;
+  const firstDipShort=firstDip?-cap[rows.indexOf(firstDip)]:0;
+  const startWeek=rows.find((r,j)=>cap[j]>=-0.5);
 
   /* what each week can carry on its own: that week's gain, less living costs */
   const inc=cap.map((c,j)=>Math.max(0, c-(j?cap[j-1]:0)));
@@ -692,14 +721,16 @@ function goalSchedule(amount, dueISO){
   }
 
   /* weekly contributions, grouped into calendar months */
+  const active=cap.map(v=>v>=-0.5);
   const groups=[];
   rows.forEach((r,j)=>{
+    if(!active[j]) return;                 // under the floor: nothing goes in
     const key=r.w.from.getFullYear()+"-"+r.w.from.getMonth();
     let g=groups.find(x=>x.key===key);
-    if(!g){ g={key, from:r.w.from, weeks:0, total:0}; groups.push(g); }
-    g.weeks++; g.total+=c[j];
+    if(!g){ g={key, from:r.w.from, weeks:0, total:0, idx:[]}; groups.push(g); }
+    g.weeks++; g.total+=c[j]; g.idx.push(j);
   });
-  groups.forEach(g=>{ g.perWeek=Math.round((g.total/g.weeks)/5)*5; });
+  groups.forEach(g=>{ g.perWeek=g.weeks?Math.round((g.total/g.weeks)/5)*5:0; });
 
   /* merge neighbouring months that land on similar amounts */
   const phases=[];
@@ -725,13 +756,13 @@ function goalSchedule(amount, dueISO){
     const mono=phases.map(p=>Object.assign({},p));
     let run=0;
     for(let i=0;i<mono.length;i++){ run=Math.max(run,mono[i].perWeek); mono[i].perWeek=run; }
-    let ok=true, cum=0, wk=0;
-    for(let i=0;i<mono.length && ok;i++){
-      for(let k=0;k<mono[i].weeks;k++){
-        cum+=mono[i].perWeek;
-        if(cum>cap[wk]+0.5){ ok=false; break; }
-        wk++;
-      }
+    let ok=true, cum=0;
+    const seq=[];
+    mono.forEach(p=>{ for(let k=0;k<p.weeks;k++) seq.push(p.perWeek); });
+    const activeIdx=cap.map((v,j)=>j).filter(j=>active[j]);
+    for(let i=0;i<seq.length && ok;i++){
+      cum+=seq[i];
+      if(cum>cap[activeIdx[i]]+0.5) ok=false;
     }
     if(ok){
       /* levelling up overshoots — scale back to the target, keep it monotone */
@@ -777,7 +808,8 @@ function goalSchedule(amount, dueISO){
         const b=(amount-a*w1)/w2;
         if(b<a) continue;
         let cum=0, ok=true;
-        for(let j=0;j<n;j++){ cum+=(j<k?a:b); if(cum>cap[j]+0.5){ ok=false; break; } }
+        for(let j=0;j<n;j++){ if(!active[j]) continue;
+          cum+=(j<k?a:b); if(cum>cap[j]+0.5){ ok=false; break; } }
         if(ok && (!best || b<best.b)) best={k,a,b,w1,w2};
       }
     });
@@ -793,6 +825,8 @@ function goalSchedule(amount, dueISO){
   }
   const flat=amount/totalWeeks;
   return {phases, feasible, reachable, amount, due, totalWeeks, flat,
+    dips:dips.length, firstDip, firstDipShort, startWeek,
+    neverRecovers:!startWeek,
     shortPerWeek:Math.max(0,(amount-reachable)/totalWeeks), sp, tooSoon:false};
 }
 function goalList(){
@@ -834,29 +868,36 @@ function viewFit(){
           +'Under two weeks away, so there is nothing to save into. Switch to '
           +'<b>Need to pay it now</b> and it will find the best week.</div>';
       } else {
-        if(!G.sp.enough)
-          h+='<div class="cut" style="margin-top:16px;border:1px solid var(--sand)">'
-            +'<div class="item" style="border:0;padding-top:0"><b style="color:var(--sand)">'
-            +'Log your spending for three weeks and this gets accurate.</b> '
-            +(G.sp.days?'You have '+G.sp.days+' days so far. ':'Nothing logged yet. ')
-            +'Right now the plan assumes you spend nothing outside your bills, which is '
-            +'optimistic — treat everything below as a best case.</div></div>';
-        else
+        if(G.sp.conf==="solid")
           h+='<p class="legend" style="margin-top:14px">Worked out against the '
-            +cash(G.sp.avg)+' a week you actually spend.</p>';
+            +cash(G.sp.avg)+' a week you actually spend · <b>'+G.sp.label+'</b></p>';
+        else
+          h+='<div class="cut" style="margin-top:16px;border:1px solid var(--sand)">'
+            +'<div class="item" style="border:0;padding-top:0">'
+            +'<b style="color:var(--sand)">Spending estimate: '+G.sp.label+'.</b> '
+            +'Using '+cash(G.sp.avg)+' a week for now. Keep logging and this sharpens — '
+            +'at three weeks it is worth trusting. Until then the plan leans optimistic.</div></div>';
 
-      if(G.baselineBreak){
+        if(G.firstDip)
+          h+='<div class="cut" style="margin-top:10px">'
+            +'<div class="item" style="border:0;padding-top:0">The week of '
+            +lDate(G.firstDip.w.from)+' runs '+cash(G.firstDipShort)+' under your floor'
+            +(G.dips>1?' (and '+(G.dips-1)+' other '+(G.dips===2?'week':'weeks')+' too)':'')
+            +'. Nothing is set aside in '+(G.dips>1?'those weeks':'that week')
+            +(G.startWeek?' — saving starts from '+lDate(G.startWeek.w.from)+'.':'.')
+            +'</div></div>';
+
+      if(G.neverRecovers){
           h+='<div class="result bad" style="margin-top:12px">'
-            +'<span class="big">Fix this week first</span>'
-            +'Before saving a cent, your plan already drops <b>'+cash(G.baselineBreak.short)
-            +'</b> under your floor in the week of '+lDate(G.baselineBreak.week.from)
-            +'. No savings schedule can work around that.</div>'
-            +'<div class="cut" style="margin-top:10px"><h4>Sort that out first</h4>'
-            +'<div class="item">Use <b>Need to pay it now</b> to move a bill into a week that '
-            +'can carry it.</div>'
-            +'<div class="item">Or lower your floor, if it is set higher than it needs to be.</div>'
-            +'<div class="item">Once no week is red, come back and this will plan the goal '
-            +'properly.</div></div>';
+            +'<span class="big">Not while this keeps up</span>'
+            +'Your account never gets back above your floor across the whole period, so there '
+            +'is nothing spare to save. A schedule here would be fiction.</div>'
+            +'<div class="cut" style="margin-top:10px"><h4>What would actually help</h4>'
+            +'<div class="item">Your bills are running ahead of your income. Check the Bills tab '
+            +'for anything that has crept up or is entered twice.</div>'
+            +'<div class="item">Lower your floor if it is set higher than it needs to be.</div>'
+            +'<div class="item">For a tax bill, ask IRD about an instalment arrangement rather '
+            +'than trying to save what is not there.</div></div>';
         } else if(G.feasible && G.phases.length){
           const p0=G.phases[0], p1=G.phases[1];
           h+='<div class="result" style="margin-top:12px">'
@@ -1603,7 +1644,8 @@ debt:["Debt","What you owe, and how fast it disappears.",[
 fit:["Planning ahead","Two different questions live here. Saving for a date, and paying for something that can't wait.",[
 ["Saving for a date","Tell it what, how much and when. It looks at what each week can actually carry — the balance, less your floor, less what you really spend — and back-loads the saving into the months that can afford it. Tight months contribute a little, flush months carry more."],
 ["One figure at a time","You only ever need the current amount. The full schedule sits behind a tap, and the Plan tab reminds you on the day a step-up is due. Set one standing order, change it when told."],
-["Why it needs your spending","Weeks with nothing logged look richer than they are. Until you have about three weeks of honest logging, the plan assumes you spend nothing outside your bills and says so plainly. Treat it as a best case until then."],
+["Why it needs your spending","Weeks with nothing logged look richer than they are. The estimate is damped so a single logged day can't become a whole week's rate, and it is labelled rough, getting there, or solid depending on how much you have logged. It never blocks the plan — it just tells you how much to trust it."],
+["Weeks under your floor","They contribute nothing and saving starts after them. A tight patch never stops you planning ahead. The only time a schedule disappears is when the account never gets back above the floor at all, and then you get the shortfall and real options instead."],
 ["Why not just pay it early","Paying a bill before it's due is a loss. That money could be sitting in your account, or better, coming off a credit card balance at 20% interest. Save toward the date instead."],
 ["What you are saving for","Every future one-off in your plan, with the weeks remaining and what each needs per week. The total is what your park amount has to cover."],
 ["Need to pay it now","For a repair or a forgotten bill that can't wait. Finds the first week you can pay without breaking your floor."],
