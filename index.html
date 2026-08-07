@@ -259,7 +259,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="3.6 Beta";
+const VERSION="3.7 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -551,8 +551,14 @@ function viewPlan(){
           +ln2("Everyday money",fr.spend,"",fr.spend<0?"rose":"")
           +ln2("Your floor, left sitting there",(+S.floor),"−")
           +ln2("Safe to spend this week",fr.safe,"","teal")
-          +'<p class="note" style="margin:8px 0 0">Spending this much keeps every week ahead '
-          +'above your floor. It is lower than the balance because later weeks live off it too.</p>'
+          +(fr.limitedBy!==undefined && fr.limitedBy!==i && FP.rows[fr.limitedBy]
+            ? '<p class="note" style="margin:8px 0 0">You have '
+              +cash(Math.max(0,fr.spend-(+S.floor)))+' spare this week, but only '+cash(fr.safe)
+              +' of it is really yours. The rest is holding up the week of <b>'
+              +sDate(FP.rows[fr.limitedBy].w.from)+'</b>, when the account bottoms out at '
+              +cash(fr.limitAmount)+'. Spend more than this and that week goes under your floor.</p>'
+            : '<p class="note" style="margin:8px 0 0">This is the tightest week in the plan, so '
+              +'what is spare here is genuinely yours.</p>')
           +'</div>';
       }
       if(lowW) h+='<div class="warn">▲ Below your '+money(+S.floor)
@@ -1113,11 +1119,12 @@ function fundPlan(nOverride){
       shortfall, net:(cB+cG)-(fromB+fromG), spend:everyday, fund:pot, contribs:n};
   });
   /* what you can spend THIS week without any later week breaking the floor */
-  let tail=Infinity;
+  let tail=Infinity, tailIdx=-1;
   for(let i=rows.length-1;i>=0;i--){
-    tail=Math.min(tail, rows[i].spend);
+    if(rows[i].spend<tail){ tail=rows[i].spend; tailIdx=i; }
     rows[i].safe=Math.max(0, tail-floor);
-    rows[i].binding=(rows[i].spend===tail);
+    rows[i].limitedBy=tailIdx;
+    rows[i].limitAmount=tail;
   }
   minP=Math.max(0,minP);
   const ideal=fund0+P*n-cum;
