@@ -259,7 +259,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="3.8 Beta";
+const VERSION="3.9 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -1147,21 +1147,33 @@ function viewFundCard(){
 
   if(f.possible){
     const sm2=smoothed(), gw=goalWeekly(), bw=sm2.billsLumpy+sm2.debtMin;
-    h+='<div class="handnote"><b>Recommended: '+cash(f.auto)+' a week</b>, and it is worth '
-      +'splitting it across two accounts so goal money can\'t get spent by accident.</div>'
+    const nowG=Math.min(f.P,gw), nowB=Math.max(0,f.P-gw);
+    const short=Math.max(0,bw-nowB);
+    h+='<div class="handnote">'
+      +(Math.abs(f.P-f.auto)<0.5
+        ? '<b>This is the recommended amount</b> — what your bills and goals actually cost. '
+        : '<b>Recommended is '+cash(f.auto)+' a week.</b> ')
+      +'Worth splitting across two accounts so goal money can\'t get spent by accident.</div>'
       +'<div style="margin:10px 0 4px">'
       +'<div class="ln"><span class="nm">Bills float — rates, insurance, power</span>'
-      +'<span class="amt sand">'+cash(bw)+'</span></div>'
+      +'<span class="amt sand">'+cash(nowB)+'</span></div>'
+      +(short>0.5?'<div class="ln"><span class="nm dim" style="font-size:12px">'
+        +'&nbsp;&nbsp;'+cash(short)+' under what those bills need</span>'
+        +'<span class="amt dim" style="font-size:12px">('+cash(bw)+')</span></div>':'')
       +(gw>0?'<div class="ln"><span class="nm">Owed to others — what you are saving for</span>'
-        +'<span class="amt rose">'+cash(gw)+'</span></div>':'')
+        +'<span class="amt rose">'+cash(nowG)+'</span></div>'
+        +(nowG<gw-0.5?'<div class="ln"><span class="nm rose" style="font-size:12px">'
+          +'&nbsp;&nbsp;'+cash(gw-nowG)+' short — a goal will miss its date</span>'
+          +'<span class="amt rose" style="font-size:12px">('+cash(gw)+')</span></div>':'')
+        :'')
       +'</div>'
       +'<div class="seg" style="margin-top:8px">'
       +'<button data-setpark="'+f.auto.toFixed(2)+'">Use '+cash(f.auto)+'</button>'
       +'<button data-setpark="'+f.minP.toFixed(2)+'">Bare minimum '+cash(f.minP)+'</button>'
       +'</div>'
       +'<div class="handnote" style="margin-top:8px">'
-      +(gw>0?'Trimming the park amount always comes out of the bills float first — money owed '
-        +'on a date is funded before anything else. ':'')
+      +(gw>0?'Trimming always comes out of the bills float first — money owed on a date is '
+        +'funded before anything else. ':'')
       +'Anything from '+cash(f.minP)+' to '+cash(f.maxP)+' a week is survivable, but going above '
       +'the recommended figure just locks money away early.</div>';
   } else {
