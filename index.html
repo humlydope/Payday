@@ -259,7 +259,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="3.7 Beta";
+const VERSION="3.8 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -1465,14 +1465,21 @@ function readFit(){
 function backup(){
   const json=JSON.stringify(D,null,2);
   const name="payday-backup-"+toISO(new Date())+".json";
-  /* iOS: the share sheet is the reliable route out of a home-screen app */
+  /* share sheet first — the reliable route out of an installed app */
   try{
     const file=new File([json],name,{type:"application/json"});
     if(navigator.canShare && navigator.canShare({files:[file]})){
-      navigator.share({files:[file],title:"Payday backup"}).catch(()=>{});
+      navigator.share({files:[file],title:"Payday backup"})
+        .catch(err=>{
+          if(err && err.name==="AbortError") return;   // you cancelled, fine
+          downloadBackup(json,name);
+        });
       return;
     }
   }catch(e){}
+  downloadBackup(json,name);
+}
+function downloadBackup(json,name){
   try{
     const blob=new Blob([json],{type:"application/json"});
     const a=document.createElement("a");
@@ -1480,6 +1487,7 @@ function backup(){
     a.download=name;
     document.body.appendChild(a); a.click();
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500);
+    setTimeout(()=>alert("Saved to your Downloads folder as\n"+name),300);
   }catch(e){ showBackupText(json); }
 }
 function showBackupText(json){
