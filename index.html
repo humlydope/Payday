@@ -176,6 +176,10 @@
   .cut .item{padding:10px 0;border-top:1px solid var(--line);}
   .cut b{color:var(--sand)}
 
+  .parkhead{display:flex;align-items:center;justify-content:space-between;width:100%;
+    padding:2px 0 4px;text-align:left;}
+  .parkchev{color:var(--dim);font-size:13px;font-family:var(--mono);}
+
   /* money in hand */
   .hand{background:var(--surface);border:1px solid var(--teal);border-radius:16px;
     padding:15px 16px 14px;margin:14px 0;}
@@ -259,7 +263,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="3.9 Beta";
+const VERSION="4.2 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -322,22 +326,45 @@ function blank(){
 }
 let D=blank(), tab="plan", ready=false;
 
-async function boot(){
-  const raw=await store.get("payday:v1");
+/* ── profiles ────────────────────────────────────────────
+   The first person lives at payday:v1, untouched, so a solo
+   user never sees any of this. Extra people get their own key. */
+let ROSTER={active:"main", list:[{id:"main",name:"Me",type:"adult"}]};
+const KID_TIPS=["#E8B15C","#5EC7F0","#A78BFA","#F08BB4","#A3D977"];
+const profKey=id=>id==="main"?"payday:v1":"payday:p:"+id;
+const activeProfile=()=>ROSTER.list.find(p=>p.id===ROSTER.active)||ROSTER.list[0];
+const isKid=()=>activeProfile().type==="kid";
+const multi=()=>ROSTER.list.length>1;
+
+async function loadProfile(id){
+  const raw=await store.get(profKey(id));
+  const base=blank();
   if(raw){
     try{ const p=JSON.parse(raw);
-      if(p&&p.settings){ const base=blank();
-        D=Object.assign(base,p);
-        D.settings=Object.assign(base.settings,p.settings); }
-    }catch(e){}
-  } else {
-    D=blank();
-  }
+      if(p&&p.settings){ D=Object.assign(base,p); D.settings=Object.assign(base.settings,p.settings); }
+      else D=base;
+    }catch(e){ D=base; }
+  } else D=base;
+}
+async function boot(){
+  const r=await store.get("payday:roster");
+  if(r){ try{ const p=JSON.parse(r); if(p&&p.list&&p.list.length) ROSTER=p; }catch(e){} }
+  if(!ROSTER.list.some(p=>p.id===ROSTER.active)) ROSTER.active=ROSTER.list[0].id;
+  await loadProfile(ROSTER.active);
   ready=true; render();
+}
+function saveRoster(){ store.set("payday:roster",JSON.stringify(ROSTER)); }
+async function switchProfile(id){
+  if(id===ROSTER.active) return;
+  clearTimeout(saveT);
+  await store.set(profKey(ROSTER.active),JSON.stringify(D));   // flush before leaving
+  ROSTER.active=id; saveRoster();
+  await loadProfile(id);
+  tab="plan"; closeSheet(); render(true);
 }
 let saveT;
 function save(){ if(!ready)return; clearTimeout(saveT);
-  saveT=setTimeout(()=>store.set("payday:v1",JSON.stringify(D)),400); }
+  saveT=setTimeout(()=>store.set(profKey(ROSTER.active),JSON.stringify(D)),400); }
 const tap=()=>{ try{navigator.vibrate&&navigator.vibrate(8);}catch(e){} };
 
 /* ── maths ── */
@@ -466,6 +493,9 @@ function viewPlan(){
     +'<button class="ghost" data-backup="1" style="margin:0">Back up</button>'
     +'<button class="ghost" data-restore="1" style="margin:0">Restore</button></div>'
     +'<input type="file" id="restoreFile" accept="application/json,.json" style="display:none">'
+    +'<div class="setrow"><label>People using this</label>'
+    +'<button class="ghost" data-people="1" style="width:auto;margin:0;padding:9px 14px">'
+    +(multi()?ROSTER.list.length+" — switch":"Add someone")+'</button></div>'
     +'<div class="setrow"><label>Version '+VERSION+'</label>'
     +'<button class="ghost" data-update="1" style="width:auto;margin:0;padding:9px 14px">'
     +'Check for update</button></div>'
@@ -1133,14 +1163,23 @@ function fundPlan(nOverride){
 }
 function viewFundCard(){
   const S=D.settings, f=fundPlan(), manual=S.parkMode==="manual";
+  const open=!!D.open.park;
   let h='<div class="hand" style="border-color:var(--sand)">'
-    +'<div class="lbl">Park each week</div>'
+    +'<button class="parkhead" data-parktoggle="1">'
+    +'<span class="lbl">Park each week</span>'
+    +'<span class="parkchev">'+(open?"\u25B4":"\u25BE")+'</span></button>'
     +'<div class="handrow"><span class="cur">$</span>'
     +(manual
       ? '<input type="number" inputmode="decimal" data-set="parkAmount" value="'+(+S.parkAmount||0)+'" style="color:var(--sand)">'
       : '<input type="number" value="'+Math.round(f.auto)+'" disabled style="color:var(--sand)">')
-    +'</div>'
-    +'<div class="seg" style="margin:6px 0 10px">'
+    +'</div>';
+  if(!open){
+    const gw=goalWeekly(), nowG=Math.min(f.P,gw), nowB=Math.max(0,f.P-gw);
+    return h+'<div class="handnote">'+cash(nowB)+' bills float'
+      +(gw>0?' &middot; '+cash(nowG)+' owed to others':'')
+      +'. Tap the heading for the detail.</div></div>';
+  }
+  h+='<div class="seg" style="margin:6px 0 10px">'
     +'<button class="'+(manual?"":"on")+'" data-park="auto">Work it out for me</button>'
     +'<button class="'+(manual?"on":"")+'" data-park="manual">I\'ll set it</button>'
     +'</div>';
@@ -1397,12 +1436,29 @@ function readSpend(){
 function render(toTop){
   const y=window.scrollY;
   const v=document.getElementById("view");
+  const nav=document.querySelector("nav");
+  const eb=document.getElementById("eyebrow");
+  const h1=document.querySelector("h1");
+  const info=document.querySelector(".info");
+
+  if(h1) h1.textContent = multi() ? activeProfile().name : "Payday Ledger";
+  if(h1) h1.style.cursor = multi() ? "pointer" : "";
+
+  if(isKid()){
+    nav.style.display="none";
+    if(info) info.style.display="none";
+    if(eb) eb.textContent="My money"+(multi()?" · tap the name to switch":"");
+    v.innerHTML=viewKid();
+    window.scrollTo(0,toTop?0:y);
+    return;
+  }
+  nav.style.display="";
+  if(info) info.style.display="";
   v.innerHTML = tab==="plan"?viewPlan(): tab==="spend"?viewSpend(): tab==="money"?viewMoney():
                 tab==="debt"?viewDebt(): viewFit();
   document.querySelectorAll("nav button").forEach(b=>
     b.classList.toggle("on",b.dataset.tab===tab));
   const names=["Sunday","Monday","","","","Friday","Saturday"];
-  const eb=document.getElementById("eyebrow");
   if(eb) eb.textContent="Week starts "+(names[(D.settings.weekStart===undefined?1:+D.settings.weekStart)]||"Monday")+" · v"+VERSION;
   if(toTop) window.scrollTo(0,0); else window.scrollTo(0,y);
 }
@@ -1460,6 +1516,18 @@ function commit(){
     const k=el.dataset.f;
     editing.item[k] = (el.type==="number") ? (Number(el.value)||0) : el.value;
   });
+  if(editing.kind==="kidincome"||editing.kind==="kidbill"){
+    const key = editing.kind==="kidincome" ? "incomes" : "bills";
+    if(editing.kind==="kidbill" && editing.sub==="goal"){
+      editing.item.kind="goal";
+      D.bills=D.bills.filter(b=>b.kind!=="goal"||b.id===editing.item.id);  // one goal at a time
+    } else if(editing.kind==="kidbill") editing.item.kind="owe";
+    const arr=D[key].slice();
+    const idx=arr.findIndex(x=>x.id===editing.item.id);
+    if(idx>=0) arr[idx]=editing.item; else arr.push(editing.item);
+    D[key]=arr; save(); closeSheet(); render();
+    return;
+  }
   const key = editing.kind==="income"?"incomes": editing.kind==="bill"?"bills":"debts";
   const arr = D[key].slice();
   const idx = arr.findIndex(x=>x.id===editing.item.id);
@@ -1474,22 +1542,49 @@ function readFit(){
   });
 }
 
-function backup(){
-  const json=JSON.stringify(D,null,2);
+async function backup(){
+  await store.set(profKey(ROSTER.active),JSON.stringify(D));   // flush current first
+  const bundle={app:"payday", saved:toISO(new Date()), roster:ROSTER, profiles:{}};
+  for(const p of ROSTER.list){
+    try{ const raw=await store.get(profKey(p.id)); bundle.profiles[p.id]=raw?JSON.parse(raw):blank(); }
+    catch(e){ bundle.profiles[p.id]=blank(); }
+  }
+  const json=JSON.stringify(bundle,null,2);
   const name="payday-backup-"+toISO(new Date())+".json";
-  /* share sheet first — the reliable route out of an installed app */
   try{
     const file=new File([json],name,{type:"application/json"});
     if(navigator.canShare && navigator.canShare({files:[file]})){
       navigator.share({files:[file],title:"Payday backup"})
-        .catch(err=>{
-          if(err && err.name==="AbortError") return;   // you cancelled, fine
-          downloadBackup(json,name);
-        });
+        .catch(err=>{ if(!err||err.name!=="AbortError") downloadBackup(json,name); });
       return;
     }
   }catch(e){}
   downloadBackup(json,name);
+}
+function restore(file){
+  const r=new FileReader();
+  r.onload=async()=>{
+    try{
+      const p=JSON.parse(r.result);
+      if(p && p.app==="payday" && p.profiles){          // everyone in one file
+        ROSTER=p.roster&&p.roster.list&&p.roster.list.length ? p.roster
+             : {active:"main",list:[{id:"main",name:"Me",type:"adult"}]};
+        for(const id of Object.keys(p.profiles))
+          await store.set(profKey(id),JSON.stringify(p.profiles[id]));
+        saveRoster();
+        if(!ROSTER.list.some(x=>x.id===ROSTER.active)) ROSTER.active=ROSTER.list[0].id;
+        await loadProfile(ROSTER.active);
+        closeSheet(); render(true);
+        return;
+      }
+      if(!p||!p.settings) throw 0;                       // older single-person file
+      const base=blank();
+      D=Object.assign(base,p);
+      D.settings=Object.assign(base.settings,p.settings);
+      save(); render();
+    }catch(e){ alert("That file doesn't look like a Payday backup."); }
+  };
+  r.readAsText(file);
 }
 function downloadBackup(json,name){
   try{
@@ -1513,20 +1608,6 @@ function showBackupText(json){
     +'<div class="sheet-actions"><button class="btn save" data-bkcopy="1">Copy</button></div>';
   const t=document.getElementById("bkText"); if(t) t.value=json;
   sh.classList.add("on"); document.getElementById("bd").classList.add("on");
-}
-function restore(file){
-  const r=new FileReader();
-  r.onload=()=>{
-    try{
-      const p=JSON.parse(r.result);
-      if(!p||!p.settings) throw 0;
-      const base=blank();
-      D=Object.assign(base,p);
-      D.settings=Object.assign(base.settings,p.settings);
-      save(); render();
-    }catch(e){ alert("That file doesn't look like a Payday backup."); }
-  };
-  r.readAsText(file);
 }
 
 function updateFxHint(){
@@ -1684,7 +1765,173 @@ async function sendAI(){
   AI.busy=false; openAI();
 }
 
-/* ── help ── */
+/* ── kid view ────────────────────────────────────────────
+   One screen. Money in, what you owe, what you're saving for,
+   and what spending costs you in days. */
+function kidPlan(extraWeekly){
+  const S=D.settings;
+  const t=new Date(), today=new Date(t.getFullYear(),t.getMonth(),t.getDate());
+  const weekly=D.incomes.reduce((a,b)=>a+((+b.amount||0)*PER_YEAR[b.freq])/52,0);
+  const owes=D.bills.filter(b=>b.kind!=="goal")
+    .map(b=>({name:b.name,amount:+b.amount||0,due:parseISO(b.anchor),id:b.id}))
+    .filter(o=>o.due).sort((a,b)=>a.due-b.due);
+  const goal=D.bills.find(b=>b.kind==="goal");
+  let cash=+S.openingCash||0, late=null, buyDay=null;
+  const need=goal?(+goal.amount||0):0;
+  const goalDue=goal&&parseISO(goal.anchor);
+  for(let w=0; w<80; w++){
+    const day=addDays(today,w*7);
+    cash += (w?weekly:0) - (w?(extraWeekly||0):0);
+    owes.forEach(o=>{
+      if(!o.paidOn && o.due<=addDays(day,6)){
+        if(cash>=o.amount){ cash-=o.amount; o.paidOn=day; }
+        else if(!late) late=o;
+      }
+    });
+    if(goal && !buyDay && cash>=need && owes.every(o=>o.paidOn)) buyDay=day;
+    if(buyDay && owes.every(o=>o.paidOn)) break;
+  }
+  return {weekly, owes, goal, need, goalDue, buyDay, late, inTime: goalDue&&buyDay?buyDay<=goalDue:null};
+}
+function viewKid(){
+  const S=D.settings, name=activeProfile().name;
+  const p=kidPlan(0);
+  let h='<div class="hand"><div class="lbl">Money I have</div>'
+    +'<div class="handrow"><span class="cur">$</span>'
+    +'<input type="number" inputmode="decimal" data-set="openingCash" value="'+(+S.openingCash||0)+'"></div>'
+    +'<div class="handnote">Everything below works off this. Change it whenever you count up.</div></div>';
+
+  /* coming in */
+  h+='<div class="sec-h"><h2>Money coming in</h2>'
+    +'<button data-kid="income" data-id="new" style="font-family:var(--mono);font-size:11px;'
+    +'color:var(--teal)">+ add</button></div>';
+  h+=D.incomes.length
+    ? D.incomes.map(i=>'<button class="card" data-kid="income" data-id="'+i.id+'">'
+        +'<span><span class="nm">'+esc(i.name||"Allowance")+'</span>'
+        +'<span class="meta">'+FLBL[i.freq]+'</span></span>'
+        +'<span class="amt teal">'+cash(+i.amount||0)+'</span></button>').join("")
+    : '<div class="empty">Add your allowance or pocket money.</div>';
+
+  /* owed */
+  h+='<div class="sec-h" style="margin-top:22px"><h2>What I owe</h2>'
+    +'<button data-kid="owe" data-id="new" style="font-family:var(--mono);font-size:11px;'
+    +'color:var(--sand)">+ add</button></div>';
+  const owes=D.bills.filter(b=>b.kind!=="goal");
+  h+=owes.length
+    ? owes.map(b=>'<button class="card" data-kid="owe" data-id="'+b.id+'">'
+        +'<span><span class="nm">'+esc(b.name||"Owed")+'</span>'
+        +'<span class="meta">by '+(parseISO(b.anchor)?lDate(parseISO(b.anchor)):"—")+'</span></span>'
+        +'<span class="amt sand">'+cash(+b.amount||0)+'</span></button>').join("")
+    : '<div class="empty">Nothing owed. Good place to be.</div>';
+
+  /* goal */
+  h+='<div class="sec-h" style="margin-top:22px"><h2>Saving for</h2>'
+    +'<button data-kid="goal" data-id="'+(p.goal?p.goal.id:"new")+'" style="font-family:var(--mono);'
+    +'font-size:11px;color:var(--rose)">'+(p.goal?"change":"+ add")+'</button></div>';
+  h+=p.goal
+    ? '<button class="card" data-kid="goal" data-id="'+p.goal.id+'">'
+      +'<span><span class="nm">'+esc(p.goal.name||"My goal")+'</span>'
+      +'<span class="meta">'+(p.goalDue?"needed by "+lDate(p.goalDue):"no date set")+'</span></span>'
+      +'<span class="amt rose">'+cash(p.need)+'</span></button>'
+    : '<div class="empty">What are you saving up for?</div>';
+
+  /* the plan */
+  if(p.weekly>0 && (p.goal||owes.length)){
+    h+='<div class="cut" style="margin-top:22px"><h4>Here is how it works out</h4>';
+    h+='<div class="item">You get <b>'+cash(p.weekly)+' a week</b>.</div>';
+    p.owes.forEach(o=>{
+      h+='<div class="item">'+esc(o.name)+' — '+cash(o.amount)+' by '+lDate(o.due)+'. '
+        +(o.paidOn?'You can pay that on <b>'+lDate(o.paidOn)+'</b>.'
+                  :'<span style="color:var(--rose)">You won\'t have enough by then.</span>')
+        +'</div>';
+    });
+    if(p.goal){
+      h+='<div class="item">'+esc(p.goal.name||"Your goal")+' costs '+cash(p.need)+'. '
+        +(p.buyDay
+          ? 'Saving everything left, you can buy it on <b>'+lDate(p.buyDay)+'</b>.'
+            +(p.inTime===true?' That is in time. ✓'
+              :p.inTime===false?' <span style="color:var(--rose)">That is too late.</span>':'')
+          : 'At this rate you cannot reach it yet.')
+        +'</div>';
+    }
+    h+='</div>';
+
+    /* the lesson */
+    if(p.goal&&p.buyDay){
+      h+='<div class="cut" style="margin-top:12px;border:1px solid var(--sand)">'
+        +'<h4 style="color:var(--sand)">What if I spend some?</h4>';
+      [2,5,10].forEach(x=>{
+        const q=kidPlan(x);
+        h+='<div class="item">Spend <b>'+cash(x)+' a week</b> — '
+          +(q.buyDay
+            ? 'you get it on <b>'+lDate(q.buyDay)+'</b>'
+              +(q.goalDue&&q.buyDay>q.goalDue?' <span style="color:var(--rose)">(too late)</span>'
+                : ', still '+Math.round((q.buyDay-p.buyDay)/86400000)+' days later')
+            : '<span style="color:var(--rose)">you never get there</span>')
+          +'.</div>';
+      });
+      h+='</div>';
+    }
+  }
+
+  h+='<button class="btn save" data-kidspend="1" style="width:100%;margin-top:20px">'
+    +'I spent something</button>';
+  h+='<button class="ghost" data-people="1" style="margin-top:10px">Switch person</button>';
+  h+='<p class="note">'+esc(name)+'\'s page. Nothing here touches anyone else\'s money.</p>';
+  return h;
+}
+/* ── profile switcher ── */
+function peopleSheet(){
+  let h='<div class="grab"></div><h3>Who is this for?</h3>'
+    +'<p class="sec-note">Each person has their own money. Nothing crosses over.</p>';
+  ROSTER.list.forEach(p=>{
+    h+='<button class="card" data-switch="'+p.id+'"'
+      +(p.id===ROSTER.active?' style="border-color:var(--teal)"':'')+'>'
+      +'<span><span class="nm">'+esc(p.name)+'</span>'
+      +'<span class="meta">'+(p.type==="kid"?"simple view":"full app")
+      +(p.id===ROSTER.active?" &middot; showing now":"")+'</span></span>'
+      +(p.id!=="main"?'<span class="x" data-delprof="'+p.id+'">&times;</span>':'')+'</button>';
+  });
+  h+='<button class="add" data-addkid="1" style="margin-top:8px">+ Add a kid</button>'
+    +'<button class="add" data-addadult="1" style="margin-top:8px">+ Add an adult</button>'
+    +'<p class="note">Backing up saves everyone in one file.</p>';
+  const sh=document.getElementById("sheet");
+  sh.innerHTML=h; sh.scrollTop=0;
+  sh.classList.add("on"); document.getElementById("bd").classList.add("on");
+}
+function kidSheet(kind,id){
+  const list = kind==="income" ? D.incomes : D.bills;
+  let item=list.find(x=>x.id===id);
+  const isNew=!item;
+  if(isNew){
+    item = kind==="income"
+      ? {id:uid(),name:"Allowance",amount:0,freq:"weekly",anchor:toISO(new Date())}
+      : {id:uid(),name:"",amount:0,freq:"once",anchor:toISO(addDays(new Date(),14)),
+         kind:(kind==="goal"?"goal":"owe")};
+  }
+  editing={kind:(kind==="income"?"kidincome":"kidbill"),item:Object.assign({},item),isNew,sub:kind};
+  const title = kind==="income" ? "Money coming in"
+    : kind==="goal" ? "What are you saving for?" : "Something you owe";
+  let b='<div class="fl"><label>'+(kind==="goal"?"What is it":"Name")+'</label>'
+    +'<input type="text" data-f="name" value="'+esc(item.name)+'" placeholder="'
+    +(kind==="income"?"Allowance":kind==="goal"?"Present for a friend":"Owed to Dad")+'"></div>'
+    +'<div class="fl"><label>How much</label>'
+    +'<input type="number" inputmode="decimal" data-f="amount" value="'+item.amount+'"></div>';
+  if(kind==="income")
+    b+='<div class="fl"><label>How often</label><select data-f="freq">'
+      +FREQS.filter(f=>f[0]!=="once").map(f=>'<option value="'+f[0]+'"'
+        +(item.freq===f[0]?" selected":"")+'>'+f[1]+'</option>').join("")
+      +'</select></div>';
+  b+='<div class="fl"><label>'+(kind==="goal"?"Needed by":kind==="income"?"Next one":"Pay it by")
+    +'</label><input type="date" data-f="anchor" value="'+item.anchor+'"></div>'
+    +'<div class="sheet-actions">'
+    +(isNew?"":'<button class="btn del" data-act="delete">Delete</button>')
+    +'<button class="btn save" data-act="save">Save</button></div>';
+  const sh=document.getElementById("sheet");
+  sh.innerHTML='<div class="grab"></div><h3>'+title+'</h3>'+b;
+  sh.classList.add("on"); document.getElementById("bd").classList.add("on");
+}
+
 const HELP={
 plan:["Weekly plan","This is the whole point of the app: what lands, what leaves, and what's left, week by week.",[
 ["Money I have right now","Your bank balance plus cash in your pocket. Every figure below is counted from this one, so a stale number here makes everything else wrong. Update it whenever you check your bank."],
@@ -1695,6 +1942,7 @@ plan:["Weekly plan","This is the whole point of the app: what lands, what leaves
 ["Safe to spend this week","Different from the figure above. It is what you can spend in that particular week while every week after it still clears your floor. It is always lower than the balance sitting in your account, because later weeks are living off that balance too. Spend it and the following weeks recalculate downward — that is correct, not a bug."],
 ["Lowest point","The tightest your spending money gets over the weeks shown. This ignores the parked pot, because that money is already promised. If this is red, trouble is coming and you can see it early."],
 ["Pay week and off week","A thick teal bar means pay lands that week. A thin bar means it doesn't. An amber bar is the part-week you're standing in right now."],
+["More than one person","Tap the name at the top to switch between people. Each has their own money, own bills, own everything — nothing crosses over. A kid gets a single simple screen instead of the full app. Backing up saves everyone in one file."],
 ["Two pots","The bills float covers rates, insurance, power — money that flows in and out constantly. The owed-to-others pot holds what you are saving for a date: a tax bill, money owed to someone. Keep them in separate bank accounts. The second one you never touch, so it can't quietly get spent on a big power bill."],
 ["Already set aside","How much is really in each pot today. The app can't see your bank, so this is the one place reality gets in. Everything after it is a forecast that assumes you actually make the transfers. Correct it whenever it drifts."],
 ["A negative pot","Means a bill lands before you've saved enough for it, so it comes out of your everyday money instead. Raise the weekly amount, start the pot with more in it, or move the bill to a later week."]]],
@@ -1810,7 +2058,9 @@ document.addEventListener("click",e=>{
     if(act.dataset.act==="save") commit();
     else if(act.dataset.act==="close") closeSheet();
     else if(act.dataset.act==="delete"){
-      const key=editing.kind==="income"?"incomes":editing.kind==="bill"?"bills":"debts";
+      const key = editing.kind==="kidincome" ? "incomes"
+                : editing.kind==="kidbill" ? "bills"
+                : editing.kind==="income"?"incomes":editing.kind==="bill"?"bills":"debts";
       D[key]=D[key].filter(x=>x.id!==editing.item.id); save(); closeSheet(); render();
     }
     return;
@@ -1832,6 +2082,53 @@ document.addEventListener("click",e=>{
       }
       F={name:"",amount:0,by:"",split:1,scanned:false,pick:null,mode:F.mode};
       save(); tab="plan"; render();
+    }
+    return;
+  }
+  /* profiles */
+  if(e.target.closest("[data-parktoggle]")){ tap(); D.open.park=!D.open.park; save(); render(); return; }
+  if(e.target.closest("[data-people]")){ tap(); peopleSheet(); return; }
+  if(e.target.closest("h1") && multi()){ tap(); peopleSheet(); return; }
+  const sw=e.target.closest("[data-switch]");
+  if(sw){ tap(); switchProfile(sw.dataset.switch); return; }
+  const dp=e.target.closest("[data-delprof]");
+  if(dp){
+    tap();
+    const pr=ROSTER.list.find(x=>x.id===dp.dataset.delprof);
+    if(pr && confirm("Remove "+pr.name+" and everything on their page?")){
+      store.set(profKey(pr.id),JSON.stringify(blank()));
+      ROSTER.list=ROSTER.list.filter(x=>x.id!==pr.id);
+      if(ROSTER.active===pr.id){ ROSTER.active="main"; saveRoster(); switchProfile("main"); return; }
+      saveRoster(); peopleSheet();
+    }
+    return;
+  }
+  if(e.target.closest("[data-addkid]")||e.target.closest("[data-addadult]")){
+    tap();
+    const kid=!!e.target.closest("[data-addkid]");
+    const nm=prompt(kid?"What's their name?":"Name for this person?");
+    if(!nm||!nm.trim()) return;
+    if(ROSTER.list.length===1 && !ROSTER.list[0].nameSet){
+      const mine=prompt("And what should your own page be called?","Me");
+      ROSTER.list[0].name=(mine&&mine.trim())||"Me";
+      ROSTER.list[0].nameSet=true;
+    }
+    const id=uid();
+    ROSTER.list.push({id, name:nm.trim(), type:kid?"kid":"adult"});
+    saveRoster(); switchProfile(id);
+    return;
+  }
+  const ke=e.target.closest("[data-kid]");
+  if(ke){ tap(); kidSheet(ke.dataset.kid, ke.dataset.id); return; }
+  if(e.target.closest("[data-kidspend]")){
+    tap();
+    const v=prompt("How much did you spend?");
+    const n=Number(v);
+    if(n>0){
+      if(!D.spend) D.spend=[];
+      D.spend.push({id:uid(),amount:n,cat:"Other",note:"",date:toISO(new Date())});
+      D.settings.openingCash=(+D.settings.openingCash||0)-n;
+      save(); render();
     }
     return;
   }
