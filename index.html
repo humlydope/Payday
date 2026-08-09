@@ -180,6 +180,15 @@
     padding:2px 0 4px;text-align:left;}
   .parkchev{color:var(--dim);font-size:13px;font-family:var(--mono);}
 
+  .ln .src{font-size:10.5px;color:var(--dim);display:block;margin-top:2px;
+    font-family:var(--mono);letter-spacing:.02em;}
+  .ln.done .nm{color:var(--dim);}
+
+  .askrow{background:var(--surface2);border-radius:9px;padding:9px 11px;margin:4px 0 8px;
+    font-size:12px;color:var(--dim);line-height:1.6;}
+  .askrow button{border:1px solid var(--line);border-radius:7px;padding:5px 12px;
+    margin-left:6px;font-size:12px;color:var(--teal);}
+
   /* money in hand */
   .hand{background:var(--surface);border:1px solid var(--teal);border-radius:16px;
     padding:15px 16px 14px;margin:14px 0;}
@@ -263,7 +272,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="4.2 Beta";
+const VERSION="4.3 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -320,7 +329,7 @@ function nextFriday(){const t=new Date();const d=new Date(t.getFullYear(),t.getM
 function blank(){
   return {incomes:[],bills:[],debts:[],spend:[],
     settings:{weeks:12,floor:200,extraDebt:0,openingCash:0,strategy:"avalanche",
-      weekStart:1,cashUpdated:"",cur:"NZD",fx:{},
+      weekStart:1,cashUpdated:"",cur:"NZD",fx:{},landed:{},
       parkMode:"auto",parkAmount:0,fundStart:0,goalStart:0,aiKeys:{}},
     open:{}};
 }
@@ -379,8 +388,18 @@ function buildWeeks(nOverride){
   for(let i=0;i<NW;i++) spans.push([addDays(firstStart,i*7),addDays(firstStart,(i+1)*7),false]);
   spans.forEach(sp=>{
     const from=sp[0], to=sp[1], part=sp[2], ins=[], outs=[];
-    D.incomes.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
-      ins.push({name:it.name,amount:+it.amount||0,date:d})));
+    /* income dated on or before your last balance update is already in that
+       balance — counting it again would double it */
+    const cutoff=parseISO(S.cashUpdated);
+    const tnow=new Date(); const tday=new Date(tnow.getFullYear(),tnow.getMonth(),tnow.getDate());
+    D.incomes.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>{
+      const key=it.id+"|"+toISO(d);
+      const marked=(D.settings.landed||{})[key];
+      const isToday=d.getTime()===tday.getTime();
+      ins.push({name:it.name,amount:+it.amount||0,date:d, key,
+        askable: isToday && marked===undefined,
+        banked: marked!==undefined ? !!marked : !!(cutoff && d<=cutoff && !isToday)});
+    }));
     D.bills.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
       outs.push({name:it.name,amount:+it.amount||0,date:d,
         lumpy:it.freq!=="weekly", goal:it.freq==="once"})));
@@ -390,7 +409,8 @@ function buildWeeks(nOverride){
     const extra=+S.extraDebt||0;
     if(extra>0&&D.debts.length&&!part) outs.push({name:"Extra off debt",amount:extra,date:from,debt:1});
     outs.sort((a,b)=>a.date-b.date);
-    const totalIn=ins.reduce((a,b)=>a+b.amount,0), totalOut=outs.reduce((a,b)=>a+b.amount,0);
+    const totalIn=ins.reduce((a,b)=>a+(b.banked?0:b.amount),0),
+          totalOut=outs.reduce((a,b)=>a+b.amount,0);
     const opening=carry, closing=opening+totalIn-totalOut; carry=closing;
     rows.push({from,to,part,ins,outs,totalIn,totalOut,opening,closing,pay:ins.length>1});
   });
@@ -544,10 +564,21 @@ function viewPlan(){
     if(open){
       h+='<div class="wk-body">';
       h+=line("Carried in",null,w.opening,"dim");
-      w.ins.forEach(x=>h+=line(x.name,x.date,x.amount,"teal","+"));
+      w.ins.forEach(x=>{
+        h+=line(x.name,x.date,x.amount,
+          x.banked?"dim":"teal", x.banked?"":"+",
+          x.banked?"\u2713 already in your balance":"\u2192 into everyday", x.banked);
+        if(x.askable)
+          h+='<div class="askrow">Has this landed in your account yet? '
+            +'<button data-landed="'+esc(x.key)+'" data-yes="1">Yes</button>'
+            +'<button data-landed="'+esc(x.key)+'" data-yes="0">Not yet</button></div>';
+      });
       h+='<div class="divider"></div>';
       if(!w.outs.length) h+='<div class="ln"><span class="nm dim">Nothing due</span></div>';
-      w.outs.forEach(x=>h+=line(x.name,x.date,x.amount,x.debt?"sand":"","−"));
+      w.outs.forEach(x=>h+=line(x.name,x.date,x.amount,
+        x.lumpy?"dim":(x.debt?"sand":""),"−",
+        x.lumpy?(x.goal?"\u2190 from the goals pot":"\u2190 from the bills pot")
+               :"\u2190 from everyday", x.lumpy));
       const sm2=smoothed();
       const fr=FP.rows[i]||null;
       if(fr){
@@ -607,10 +638,11 @@ function ln2(name,amount,sign,cls){
   return '<div class="ln"><span class="nm'+(cls?" "+cls:"")+'">'+name+'</span>'
     +'<span class="amt '+(cls||"")+'">'+(sign||"")+cash(amount)+'</span></div>';
 }
-function line(name,date,amount,cls,sign){
-  return '<div class="ln"><span class="nm">'+esc(name)
-    +(date?'<span class="dt">'+sDate(date)+'</span>':'')+'</span>'
-    +'<span class="amt '+(cls||"")+'">'+(sign||"")+money(amount)+'</span></div>';
+function line(name,date,amount,cls,sign,src,done){
+  return '<div class="ln'+(done?" done":"")+'"><span class="nm">'+esc(name)
+    +(date?'<span class="dt">'+sDate(date)+'</span>':'')
+    +(src?'<span class="src">'+src+'</span>':'')+'</span>'
+    +'<span class="amt '+(cls||"")+'">'+(sign||"")+cash(amount)+'</span></div>';
 }
 
 function viewMoney(){
@@ -2086,6 +2118,13 @@ document.addEventListener("click",e=>{
     return;
   }
   /* profiles */
+  const ld=e.target.closest("[data-landed]");
+  if(ld){
+    tap();
+    if(!D.settings.landed) D.settings.landed={};
+    D.settings.landed[ld.dataset.landed]=(ld.dataset.yes==="1");
+    save(); render(); return;
+  }
   if(e.target.closest("[data-parktoggle]")){ tap(); D.open.park=!D.open.park; save(); render(); return; }
   if(e.target.closest("[data-people]")){ tap(); peopleSheet(); return; }
   if(e.target.closest("h1") && multi()){ tap(); peopleSheet(); return; }
