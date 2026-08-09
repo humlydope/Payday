@@ -186,8 +186,8 @@
 
   .askrow{background:var(--surface2);border-radius:9px;padding:9px 11px;margin:4px 0 8px;
     font-size:12px;color:var(--dim);line-height:1.6;}
-  .askrow button{border:1px solid var(--line);border-radius:7px;padding:5px 12px;
-    margin-left:6px;font-size:12px;color:var(--teal);}
+  .askrow button{display:block;width:100%;border:1px solid var(--line);border-radius:8px;
+    padding:10px 12px;margin-top:7px;font-size:12.5px;color:var(--teal);text-align:left;}
 
   /* money in hand */
   .hand{background:var(--surface);border:1px solid var(--teal);border-radius:16px;
@@ -272,7 +272,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="4.3 Beta";
+const VERSION="4.4 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -390,15 +390,15 @@ function buildWeeks(nOverride){
     const from=sp[0], to=sp[1], part=sp[2], ins=[], outs=[];
     /* income dated on or before your last balance update is already in that
        balance — counting it again would double it */
-    const cutoff=parseISO(S.cashUpdated);
     const tnow=new Date(); const tday=new Date(tnow.getFullYear(),tnow.getMonth(),tnow.getDate());
     D.incomes.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>{
       const key=it.id+"|"+toISO(d);
       const marked=(D.settings.landed||{})[key];
       const isToday=d.getTime()===tday.getTime();
+      const past=d<tday;
       ins.push({name:it.name,amount:+it.amount||0,date:d, key,
         askable: isToday && marked===undefined,
-        banked: marked!==undefined ? !!marked : !!(cutoff && d<=cutoff && !isToday)});
+        banked: marked!==undefined ? !!marked : past});
     }));
     D.bills.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
       outs.push({name:it.name,amount:+it.amount||0,date:d,
@@ -569,9 +569,12 @@ function viewPlan(){
           x.banked?"dim":"teal", x.banked?"":"+",
           x.banked?"\u2713 already in your balance":"\u2192 into everyday", x.banked);
         if(x.askable)
-          h+='<div class="askrow">Has this landed in your account yet? '
-            +'<button data-landed="'+esc(x.key)+'" data-yes="1">Yes</button>'
-            +'<button data-landed="'+esc(x.key)+'" data-yes="0">Not yet</button></div>';
+          h+='<div class="askrow">This is due today. Which is it?'
+            +'<button data-landed="'+esc(x.key)+'" data-mode="add" data-amt="'+x.amount+'">'
+            +'It arrived — add '+cash(x.amount)+' to my balance</button>'
+            +'<button data-landed="'+esc(x.key)+'" data-mode="already">'
+            +'It arrived and my balance already includes it</button>'
+            +'<button data-landed="'+esc(x.key)+'" data-mode="not">Not yet</button></div>';
       });
       h+='<div class="divider"></div>';
       if(!w.outs.length) h+='<div class="ln"><span class="nm dim">Nothing due</span></div>';
@@ -2122,7 +2125,16 @@ document.addEventListener("click",e=>{
   if(ld){
     tap();
     if(!D.settings.landed) D.settings.landed={};
-    D.settings.landed[ld.dataset.landed]=(ld.dataset.yes==="1");
+    const m=ld.dataset.mode;
+    if(m==="add"){
+      D.settings.openingCash=(+D.settings.openingCash||0)+(Number(ld.dataset.amt)||0);
+      D.settings.cashUpdated=toISO(new Date());
+      D.settings.landed[ld.dataset.landed]=true;
+    } else if(m==="already"){
+      D.settings.landed[ld.dataset.landed]=true;
+    } else {
+      D.settings.landed[ld.dataset.landed]=false;
+    }
     save(); render(); return;
   }
   if(e.target.closest("[data-parktoggle]")){ tap(); D.open.park=!D.open.park; save(); render(); return; }
