@@ -281,7 +281,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="5.8 Beta";
+const VERSION="5.9 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -630,7 +630,7 @@ function viewPlan(){
       const sm2=smoothed();
       /* the goals transfer isn't a dated bill, so it needs its own line */
       const gwk=r2(goalWeekly());
-      if(gwk>0 && !w.part){
+      if(gwk>0){
         const gkey="goalpark|"+toISO(w.from);
         const gm=(D.settings.marks||{})[gkey];
         const gdone=!!gm;
@@ -645,7 +645,7 @@ function viewPlan(){
       }
 
       const smB=smoothed(); const bwk=r2(smB.billsLumpy+smB.debtMin);
-      if(bwk>0 && !w.part){
+      if(bwk>0){
         const bkey="billpark|"+toISO(w.from);
         const bm=(D.settings.marks||{})[bkey];
         const bdone=!!bm;
