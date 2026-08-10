@@ -281,7 +281,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="5.6 Beta";
+const VERSION="5.8 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -339,7 +339,7 @@ function nextFriday(){const t=new Date();const d=new Date(t.getFullYear(),t.getM
 function blank(){
   return {incomes:[],bills:[],debts:[],spend:[],
     settings:{weeks:12,floor:200,extraDebt:0,openingCash:0,strategy:"avalanche",
-      weekStart:1,cashUpdated:"",cur:"NZD",fx:{},landed:{},marks:{},
+      weekStart:1,cashUpdated:"",cur:"NZD",fx:{},landed:{},arrived:{},marks:{},
       parkMode:"auto",parkAmount:0,fundStart:0,goalStart:0,aiKeys:{}},
     open:{}};
 }
@@ -412,9 +412,12 @@ function buildWeeks(nOverride){
       const marked=(D.settings.landed||{})[key];
       const isToday=d.getTime()===tday.getTime();
       const past=d<tday;
-      ins.push({name:it.name,amount:+it.amount||0,date:d, key,
-        askable: isToday && marked===undefined,
-        banked: marked!==undefined ? !!marked : past});
+      const rec=(D.settings.arrived||{})[key];          // what actually landed
+      const amt=rec!==undefined ? r2(rec) : (+it.amount||0);
+      ins.push({name:it.name, amount:amt, expected:+it.amount||0, date:d, key,
+        arrived: rec!==undefined,
+        markable: d<=addDays(tday,13),
+        banked: rec!==undefined ? true : (marked!==undefined ? !!marked : past)});
     }));
     const MK=D.settings.marks||{};
     const pushOut=(it,d,amt,extra)=>{
@@ -589,16 +592,19 @@ function viewPlan(){
       h+='<div class="wk-body">';
       h+=line("Carried in",null,w.opening,"dim");
       w.ins.forEach(x=>{
-        h+=line(x.name,x.date,x.amount,
-          x.banked?"dim":"teal", x.banked?"":"+",
-          x.banked?"\u2713 already in your balance":"\u2192 into everyday", x.banked);
-        if(x.askable)
-          h+='<div class="askrow">This is due today. Which is it?'
-            +'<button data-landed="'+esc(x.key)+'" data-mode="add" data-amt="'+x.amount+'">'
-            +'It arrived — add '+cash(x.amount)+' to my balance</button>'
-            +'<button data-landed="'+esc(x.key)+'" data-mode="already">'
-            +'It arrived and my balance already includes it</button>'
-            +'<button data-landed="'+esc(x.key)+'" data-mode="not">Not yet</button></div>';
+        let src;
+        if(x.arrived){
+          const diff=r2(x.amount-x.expected);
+          src="\u2713 "+cash(x.amount)+" arrived"
+            +(diff>0.01?" \u00b7 "+cash(diff)+" more than expected"
+             :diff<-0.01?" \u00b7 "+cash(-diff)+" less than expected":"");
+        } else src = x.banked ? "\u2713 already in your balance" : "\u2192 into everyday";
+        h+=line(x.name,x.date,x.amount, x.banked?"dim":"teal", x.banked?"":"+", src, x.banked);
+        if(x.markable)
+          h+='<div class="marks">'
+            +'<button class="'+(x.arrived?"on":"")+'" data-arrived="'+esc(x.key)
+            +'" data-amt="'+x.expected+'">'
+            +(x.arrived?"\u2713 Arrived \u00b7 tap to undo":"It arrived")+'</button></div>';
       });
       h+='<div class="divider"></div>';
       if(!w.outs.length) h+='<div class="ln"><span class="nm dim">Nothing due</span></div>';
@@ -2122,20 +2128,36 @@ document.addEventListener("click",e=>{
     return;
   }
   /* profiles */
-  const ld=e.target.closest("[data-landed]");
-  if(ld){
+  const ar=e.target.closest("[data-arrived]");
+  if(ar){
+    tap();
+    if(!D.settings.arrived) D.settings.arrived={};
+    if(!D.settings.landed) D.settings.landed={};
+    const key=ar.dataset.arrived, prev=D.settings.arrived[key];
+    if(prev!==undefined){                         // second tap undoes it
+      D.settings.openingCash=r2((+D.settings.openingCash||0)-r2(prev));
+      delete D.settings.arrived[key];
+      delete D.settings.landed[key];
+      save(); render(); return;
+    }
+    const exp=Number(ar.dataset.amt)||0;
+    const v=prompt("How much actually landed?", exp.toFixed(2));
+    const n=Number(v);
+    if(!(n>0)) return;
+    D.settings.arrived[key]=r2(n);
+    D.settings.openingCash=r2((+D.settings.openingCash||0)+r2(n));
+    D.settings.cashUpdated=toISO(new Date());
+    delete D.settings.landed[key];
+    save(); render(); return;
+  }
+  const ai=e.target.closest("[data-alreadyin]");
+  if(ai){
     tap();
     if(!D.settings.landed) D.settings.landed={};
-    const m=ld.dataset.mode;
-    if(m==="add"){
-      D.settings.openingCash=(+D.settings.openingCash||0)+(Number(ld.dataset.amt)||0);
-      D.settings.cashUpdated=toISO(new Date());
-      D.settings.landed[ld.dataset.landed]=true;
-    } else if(m==="already"){
-      D.settings.landed[ld.dataset.landed]=true;
-    } else {
-      D.settings.landed[ld.dataset.landed]=false;
-    }
+    const key=ai.dataset.alreadyin;
+    if(D.settings.arrived && D.settings.arrived[key]!==undefined) return;  // use the other button
+    if(D.settings.landed[key]) delete D.settings.landed[key];
+    else D.settings.landed[key]=true;
     save(); render(); return;
   }
   const mk=e.target.closest("[data-mark]");
