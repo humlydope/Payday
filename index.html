@@ -281,7 +281,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="5.4 Beta";
+const VERSION="5.5 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -630,7 +630,7 @@ function viewPlan(){
         const gdone=!!gm;
         h+='<div class="divider"></div>'
           +line("Set aside for your goals",null,gwk, gdone?"dim":"rose", gdone?"":"−",
-            gdone?"\u2713 "+cash(gm.amount)+" set aside"+(gm.amount<gwk-0.01?" \u00b7 "+cash(gwk-gm.amount)+" short of the weekly amount":"")
+            gdone?"\u2713 "+cash(gm.amount)+" set aside"+(gm.amount<gwk-0.01?" \u00b7 "+cash(gwk-gm.amount)+" short of the weekly amount":gm.amount>gwk+0.01?" \u00b7 "+cash(gm.amount-gwk)+" ahead":"")
                  :"\u2192 into the goals account", gdone);
         if(w.from<=addDays(new Date(),13))
           h+='<div class="marks"><button class="'+(gdone?"on":"")+'" data-mark="aside" '
@@ -2152,7 +2152,8 @@ document.addEventListener("click",e=>{
       const v=prompt("How much did you move across?", full.toFixed(2));
       const n=Number(v);
       if(!(n>0)){ save(); render(); return; }
-      const amt=r2(Math.min(n,full));
+      const isPark = key.indexOf("goalpark|")===0;
+      const amt=r2(isPark ? n : Math.min(n,full));
       D.settings.marks[key]={state:"aside",amount:amt,goal:isGoal};
       D.settings.openingCash=r2(cash0()-amt);
       if(isGoal) D.settings.goalStart=r2((+D.settings.goalStart||0)+amt);
