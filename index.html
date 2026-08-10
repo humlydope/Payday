@@ -281,7 +281,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="5.0 Beta";
+const VERSION="5.1 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -305,6 +305,7 @@ const dayShort=d=>d.toLocaleDateString("en-NZ",{weekday:"short"});
 const lDate=d=>d.toLocaleDateString("en-NZ",{day:"numeric",month:"short",year:"numeric"});
 const money=n=>(n<0?"-$":"$")+Math.abs(Math.round(n)).toLocaleString("en-NZ");
 const uid=()=>Math.random().toString(36).slice(2,9);
+const r2=n=>Math.round((Number(n)||0)*100)/100;
 const esc=s=>String(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 const FREQS=[["weekly","Weekly"],["fortnightly","Fortnightly"],["monthly","Monthly"],
@@ -1166,14 +1167,14 @@ function fundPlan(nOverride){
     if(!w.part) n++;
     /* what a pot still owes on an unmarked line: money set aside earlier has
        already left everyday, so the pot pays it now */
-    const dueB=w.outs.filter(o=>o.lumpy&&!o.goal).reduce((a,b)=>a+b.remaining,0);
-    const dueG=w.outs.filter(o=>o.goal).reduce((a,b)=>a+b.remaining,0);
-    const asideB=w.outs.filter(o=>o.lumpy&&!o.goal).reduce((a,b)=>a+b.aside,0);
+    /* only money you actually earmarked leaves a pot — an unmarked bill is
+       paid from everyday, so the float sits untouched until you allocate it */
+    const asideB=w.outs.filter(o=>!o.goal).reduce((a,b)=>a+b.aside,0);
     const asideG=w.outs.filter(o=>o.goal).reduce((a,b)=>a+b.aside,0);
 
     const bB=potB, bG=potG;
-    const fromB=Math.min(bB,dueB+asideB), afterB=bB-fromB;
-    const fromG=Math.min(bG,dueG+asideG), afterG=bG-fromG;
+    const fromB=Math.min(bB,asideB), afterB=bB-fromB;
+    const fromG=Math.min(bG,asideG), afterG=bG-fromG;
     potB=afterB; potG=afterG;
 
     const pot=afterB+afterG;
@@ -1182,8 +1183,8 @@ function fundPlan(nOverride){
     if(everyday<worstSpend) worstSpend=everyday;
     const allHandled = w.outs.length>0 && w.outs.every(o=>o.paid||o.aside>=o.amount-0.01);
     return {w, contribs:n, allHandled,
-      bills:{before:bB,out:fromB,after:afterB,due:dueB+asideB},
-      goals:{before:bG,out:fromG,after:afterG,due:dueG+asideG},
+      bills:{before:bB,out:fromB,after:afterB,due:asideB},
+      goals:{before:bG,out:fromG,after:afterG,due:asideG},
       potBefore:bB+bG, potAfter:pot, spend:everyday, fund:pot};
   });
   /* what you can spend THIS week without any later week breaking the floor */
@@ -2111,29 +2112,29 @@ document.addEventListener("click",e=>{
 
     /* undo whatever was there */
     if(cur){
-      if(cur.state==="paid") D.settings.openingCash=cash0()+(+cur.amount||0);
+      if(cur.state==="paid") D.settings.openingCash=r2(cash0()+(+cur.amount||0));
       else {
-        D.settings.openingCash=cash0()+(+cur.amount||0);
-        if(cur.goal) D.settings.goalStart=Math.max(0,(+D.settings.goalStart||0)-(+cur.amount||0));
-        else D.settings.fundStart=Math.max(0,(+D.settings.fundStart||0)-(+cur.amount||0));
+        D.settings.openingCash=r2(cash0()+(+cur.amount||0));
+        if(cur.goal) D.settings.goalStart=r2(Math.max(0,(+D.settings.goalStart||0)-(+cur.amount||0)));
+        else D.settings.fundStart=r2(Math.max(0,(+D.settings.fundStart||0)-(+cur.amount||0)));
       }
       delete D.settings.marks[key];
       if(cur.state===mode){ save(); render(); return; }   // second tap = undo
     }
 
     if(mode==="paid"){
-      D.settings.marks[key]={state:"paid",amount:full};
-      D.settings.openingCash=cash0()-full;
+      D.settings.marks[key]={state:"paid",amount:r2(full)};
+      D.settings.openingCash=r2(cash0()-full);
     } else {
       const isGoal=mk.dataset.goal==="1";
       const v=prompt("How much did you move across?", full.toFixed(2));
       const n=Number(v);
       if(!(n>0)){ save(); render(); return; }
-      const amt=Math.min(n,full);
+      const amt=r2(Math.min(n,full));
       D.settings.marks[key]={state:"aside",amount:amt,goal:isGoal};
-      D.settings.openingCash=cash0()-amt;
-      if(isGoal) D.settings.goalStart=(+D.settings.goalStart||0)+amt;
-      else D.settings.fundStart=(+D.settings.fundStart||0)+amt;
+      D.settings.openingCash=r2(cash0()-amt);
+      if(isGoal) D.settings.goalStart=r2((+D.settings.goalStart||0)+amt);
+      else D.settings.fundStart=r2((+D.settings.fundStart||0)+amt);
     }
     D.settings.cashUpdated=toISO(new Date());
     save(); render(); return;
@@ -2273,7 +2274,7 @@ document.addEventListener("click",e=>{
       d.balance=Math.max(0,(+d.balance||0)-nzd);
     }
     D.spend.push(rec);
-    D.settings.openingCash=(+D.settings.openingCash||0)-nzd;
+    D.settings.openingCash=r2((+D.settings.openingCash||0)-nzd);
     D.settings.cashUpdated=toISO(new Date());
     SP.amount=""; SP.note="";
     save(); render(); return;
@@ -2284,7 +2285,7 @@ document.addEventListener("click",e=>{
     const id=spd.dataset.spdel, it=(D.spend||[]).find(x=>x.id===id);
     if(it){
       D.spend=D.spend.filter(x=>x.id!==id);
-      D.settings.openingCash=(+D.settings.openingCash||0)+(+it.amount||0);
+      D.settings.openingCash=r2((+D.settings.openingCash||0)+(+it.amount||0));
       if(it.debtId){
         const d=D.debts.find(x=>x.id===it.debtId);
         if(d) d.balance=(+d.balance||0)+(+it.amount||0);
