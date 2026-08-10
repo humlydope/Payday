@@ -189,6 +189,15 @@
   .askrow button{display:block;width:100%;border:1px solid var(--line);border-radius:8px;
     padding:10px 12px;margin-top:7px;font-size:12.5px;color:var(--teal);text-align:left;}
 
+  .marks{display:flex;gap:7px;margin:2px 0 10px;}
+  .marks button{flex:1;border:1px solid var(--line);border-radius:8px;padding:8px 6px;
+    font-size:12px;color:var(--dim);background:var(--surface);}
+  .marks button.on{border-color:var(--teal);color:var(--teal);background:var(--surface2);}
+
+  .potrow{display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;}
+  .potrow .nm{font-size:14px;}
+  .potrow .amt{font-family:var(--mono);font-size:19px;font-weight:700;}
+
   /* money in hand */
   .hand{background:var(--surface);border:1px solid var(--teal);border-radius:16px;
     padding:15px 16px 14px;margin:14px 0;}
@@ -272,7 +281,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="4.4 Beta";
+const VERSION="5.0 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -329,7 +338,7 @@ function nextFriday(){const t=new Date();const d=new Date(t.getFullYear(),t.getM
 function blank(){
   return {incomes:[],bills:[],debts:[],spend:[],
     settings:{weeks:12,floor:200,extraDebt:0,openingCash:0,strategy:"avalanche",
-      weekStart:1,cashUpdated:"",cur:"NZD",fx:{},landed:{},
+      weekStart:1,cashUpdated:"",cur:"NZD",fx:{},landed:{},marks:{},
       parkMode:"auto",parkAmount:0,fundStart:0,goalStart:0,aiKeys:{}},
     open:{}};
 }
@@ -400,17 +409,25 @@ function buildWeeks(nOverride){
         askable: isToday && marked===undefined,
         banked: marked!==undefined ? !!marked : past});
     }));
+    const MK=D.settings.marks||{};
+    const pushOut=(it,d,amt,extra)=>{
+      const key=it.id+"|"+toISO(d);
+      const m=MK[key]||null;
+      const aside=(m&&m.state==="aside")?Math.min(amt,+m.amount||0):0;
+      const paid=(m&&m.state==="paid");
+      outs.push(Object.assign({name:it.name,amount:amt,date:d,key,mark:m,
+        aside, paid, remaining: paid?0:Math.max(0,amt-aside)},extra||{}));
+    };
     D.bills.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
-      outs.push({name:it.name,amount:+it.amount||0,date:d,
-        lumpy:it.freq!=="weekly", goal:it.freq==="once"})));
+      pushOut(it,d,+it.amount||0,{lumpy:it.freq!=="weekly", goal:it.freq==="once"})));
     D.debts.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
-      outs.push({name:it.name+" minimum",amount:+it.minPayment||0,date:d,debt:1,
-        lumpy:it.freq!=="weekly"})));
+      pushOut(Object.assign({},it,{name:it.name+" minimum"}),d,+it.minPayment||0,
+        {debt:1, lumpy:it.freq!=="weekly"})));
     const extra=+S.extraDebt||0;
     if(extra>0&&D.debts.length&&!part) outs.push({name:"Extra off debt",amount:extra,date:from,debt:1});
     outs.sort((a,b)=>a.date-b.date);
     const totalIn=ins.reduce((a,b)=>a+(b.banked?0:b.amount),0),
-          totalOut=outs.reduce((a,b)=>a+b.amount,0);
+          totalOut=outs.reduce((a,b)=>a+b.remaining,0);
     const opening=carry, closing=opening+totalIn-totalOut; carry=closing;
     rows.push({from,to,part,ins,outs,totalIn,totalOut,opening,closing,pay:ins.length>1});
   });
@@ -480,11 +497,11 @@ function viewPlan(){
   const FP=fundPlan();
   h+='<div class="stats">'
     +statTile("Income / week",money(sm.income),"","averaged over the cycle")
-    +statTile("Park each week",money(FP.P),"sand",
-        FP.possible?"safe range "+money(FP.minP)+"–"+money(FP.maxP):"no safe amount yet")
+    +statTile("In the pots",money(FP.potBills+FP.potGoals),"sand",
+        "bills float plus goals")
     +statTile("Free to spend",money(sm.free),sm.free<0?"rose":"teal","after every commitment")
     +statTile("Lowest point",money(FP.worstSpend),(FP.worstSpend)<(+S.floor)?"rose":"",
-        "spending money, not counting the pot")
+        "your everyday account, weeks ahead")
     +'</div>';
 
   if(!D.incomes.length && !D.bills.length && !D.debts.length){
@@ -578,51 +595,55 @@ function viewPlan(){
       });
       h+='<div class="divider"></div>';
       if(!w.outs.length) h+='<div class="ln"><span class="nm dim">Nothing due</span></div>';
-      w.outs.forEach(x=>h+=line(x.name,x.date,x.amount,
-        x.lumpy?"dim":(x.debt?"sand":""),"−",
-        x.lumpy?(x.goal?"\u2190 from the goals pot":"\u2190 from the bills pot")
-               :"\u2190 from everyday", x.lumpy));
+      const tnow2=new Date(), tday2=new Date(tnow2.getFullYear(),tnow2.getMonth(),tnow2.getDate());
+      const soon=addDays(tday2,13);
+      w.outs.forEach(x=>{
+        const done=x.paid||x.aside>0;
+        let src;
+        if(x.paid) src="\u2713 paid";
+        else if(x.aside>=x.amount-0.01) src="\u2713 set aside, waiting for the due date";
+        else if(x.aside>0) src="\u2713 "+cash(x.aside)+" set aside \u00b7 "+cash(x.remaining)+" still to pay";
+        else src = x.lumpy ? (x.goal?"\u2190 goals pot, then everyday":"\u2190 bills pot, then everyday")
+                           : "\u2190 from everyday";
+        h+=line(x.name,x.date,x.amount, done?"dim":(x.debt?"sand":""), done?"":"−", src, done);
+        if(x.date<=soon)
+          h+='<div class="marks">'
+            +'<button class="'+(x.paid?"on":"")+'" data-mark="paid" data-key="'+esc(x.key)
+            +'" data-amt="'+x.amount+'">'+(x.paid?"\u2713 Paid":"Paid")+'</button>'
+            +'<button class="'+(x.aside>0?"on":"")+'" data-mark="aside" data-key="'+esc(x.key)
+            +'" data-amt="'+x.amount+'" data-goal="'+(x.goal?1:0)+'">'
+            +(x.aside>0?"\u2713 Set aside":"Put aside")+'</button></div>';
+      });
       const sm2=smoothed();
       const fr=FP.rows[i]||null;
       if(fr){
-        const potBlock=(title,o,tone)=>
-          '<div class="lbl" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;'
-          +'color:var(--dim);text-transform:uppercase;margin:2px 0 6px">'+title+'</div>'
-          +ln2("Starts at",o.before)
-          +ln2("You put in",o.in,"+")
-          +(o.due>0.5?ln2("Pays out",o.out,"−"):"")
-          +ln2("Ends the week",o.after,"",tone)
-          +(Math.abs(o.net)<0.5
-            ? '<div class="ln"><span class="nm dim">Transfer</span>'
-              +'<span class="amt dim">nothing this week</span></div>'
-            : ln2(o.net>0?"→ Move in":"← Take out",Math.abs(o.net),"","sand"));
-
-        h+='<div class="action">'
-          +potBlock("Bills float",fr.bills,"teal")
-          +(goalWeekly()>0||fr.goals.after>0.5||fr.goals.due>0.5
-            ? '<div class="divider"></div>'+potBlock("Owed to others",fr.goals,"rose")
-            : "")
-          +(fr.capped
-            ? '<div class="warn" style="color:var(--sand)">▲ You set '+cash(fr.wanted)
-              +' a week but only '+cash(fr.contrib)+' fits without breaking your floor. '
-              +'Lower the park amount above.</div>' : '')
-          +(fr.shortfall>0.5
-            ? '<div class="warn">▲ '+cash(fr.shortfall)+' of this week\'s bills came out of '
-              +'everyday money — the pots didn\'t hold enough yet.</div>' : '')
-          +'<div class="divider"></div>'
-          +ln2("Total in the account",w.closing)
-          +ln2("Sitting in the two pots",fr.potAfter,"−")
-          +ln2("Everyday money",fr.spend,"",fr.spend<0?"rose":"")
-          +ln2("Your floor, left sitting there",(+S.floor),"−")
+        const yours=Math.max(0,fr.spend-(+S.floor));
+        h+='<div class="action">';
+        if(fr.allHandled)
+          h+='<div class="item" style="border:0;padding:0 0 10px;color:var(--teal)">'
+            +'\u2713 Everything due this week is handled.</div>';
+        if(fr.bills.out>0.5||fr.goals.out>0.5||fr.potAfter>0.5){
+          h+='<div class="lbl" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;'
+            +'color:var(--dim);text-transform:uppercase;margin-bottom:8px">The pots</div>';
+          if(fr.bills.before>0.5||fr.bills.out>0.5)
+            h+=ln2("Bills float",fr.bills.before)
+              +(fr.bills.out>0.5?ln2("  pays out",fr.bills.out,"\u2212"):"")
+              +ln2("  left",fr.bills.after,"","sand");
+          if(fr.goals.before>0.5||fr.goals.out>0.5)
+            h+=ln2("Goals account",fr.goals.before)
+              +(fr.goals.out>0.5?ln2("  pays out",fr.goals.out,"\u2212"):"")
+              +ln2("  left",fr.goals.after,"","rose");
+          h+='<div class="divider"></div>';
+        }
+        h+=ln2("In your everyday account",fr.spend)
+          +ln2("Your floor, left sitting there",(+S.floor),"\u2212")
           +ln2("Safe to spend this week",fr.safe,"","teal")
           +(fr.limitedBy!==undefined && fr.limitedBy!==i && FP.rows[fr.limitedBy]
-            ? '<p class="note" style="margin:8px 0 0">You have '
-              +cash(Math.max(0,fr.spend-(+S.floor)))+' spare this week, but only '+cash(fr.safe)
-              +' of it is really yours. The rest is holding up the week of <b>'
-              +sDate(FP.rows[fr.limitedBy].w.from)+'</b>, when the account bottoms out at '
-              +cash(fr.limitAmount)+'. Spend more than this and that week goes under your floor.</p>'
-            : '<p class="note" style="margin:8px 0 0">This is the tightest week in the plan, so '
-              +'what is spare here is genuinely yours.</p>')
+            ? '<p class="note" style="margin:8px 0 0">You have '+cash(yours)
+              +' spare this week, but only '+cash(fr.safe)+' of it is really yours \u2014 the rest '
+              +'is holding up the week of <b>'+sDate(FP.rows[fr.limitedBy].w.from)+'</b>.</p>'
+            : '<p class="note" style="margin:8px 0 0">This is the tightest week ahead, so what is '
+              +'spare here is genuinely yours.</p>')
           +'</div>';
       }
       if(lowW) h+='<div class="warn">▲ Below your '+money(+S.floor)
@@ -1136,52 +1157,34 @@ function parkAmount(){
 }
 function fundPlan(nOverride){
   const W=buildWeeks(nOverride), S=D.settings;
-  const fund0=+S.fundStart||0, goal0=+S.goalStart||0, floor=+S.floor||0, P=parkAmount();
-  /* Goal money is owed to someone on a date, so it gets funded first.
-     Trimming the park amount comes out of the bills float. */
-  const needG=goalWeekly();
-  const parkG=Math.min(P,needG), parkB=Math.max(0,P-needG);
-  let cum=0, n=0, minP=0, maxP=Infinity, worstFund=Infinity, worstSpend=Infinity;
-  let potB=Math.max(0,fund0), potG=Math.max(0,goal0);
+  const floor=+S.floor||0;
+  /* Pots hold exactly what you have moved into them — nothing is assumed.
+     They pay out when a bill they cover falls due, and drain as they go. */
+  let potB=Math.max(0,+S.fundStart||0), potG=Math.max(0,+S.goalStart||0);
+  let worstFund=Infinity, worstSpend=Infinity, n=0;
   const rows=W.map(w=>{
     if(!w.part) n++;
-    const dueB=w.outs.filter(o=>o.lumpy&&!o.goal).reduce((a,b)=>a+b.amount,0);
-    const dueG=w.outs.filter(o=>o.goal).reduce((a,b)=>a+b.amount,0);
-    cum += dueB+dueG;
+    /* what a pot still owes on an unmarked line: money set aside earlier has
+       already left everyday, so the pot pays it now */
+    const dueB=w.outs.filter(o=>o.lumpy&&!o.goal).reduce((a,b)=>a+b.remaining,0);
+    const dueG=w.outs.filter(o=>o.goal).reduce((a,b)=>a+b.remaining,0);
+    const asideB=w.outs.filter(o=>o.lumpy&&!o.goal).reduce((a,b)=>a+b.aside,0);
+    const asideG=w.outs.filter(o=>o.goal).reduce((a,b)=>a+b.aside,0);
 
-    let cB = w.part?0:parkB, cG = w.part?0:parkG;
     const bB=potB, bG=potG;
-    let fromG=Math.min(bG+cG,dueG), afterG=bG+cG-fromG;
-    let fromB=Math.min(bB+cB,dueB), afterB=bB+cB-fromB;
-
-    /* neither pot can hold money the account doesn't have */
-    const maxPot=Math.max(0,w.closing-floor);
-    let capped=false;
-    if(afterG+afterB>maxPot){
-      const over=afterG+afterB-maxPot;
-      const cutB=Math.min(cB,over);          // trim the float first
-      cB-=cutB;
-      fromB=Math.min(bB+cB,dueB); afterB=bB+cB-fromB;
-      const still=afterG+afterB-maxPot;
-      if(still>0){ cG=Math.max(0,cG-still);
-        fromG=Math.min(bG+cG,dueG); afterG=bG+cG-fromG; }
-      capped=true;
-    }
+    const fromB=Math.min(bB,dueB+asideB), afterB=bB-fromB;
+    const fromG=Math.min(bG,dueG+asideG), afterG=bG-fromG;
     potB=afterB; potG=afterG;
+
     const pot=afterB+afterG;
-    const shortfall=(dueB-fromB)+(dueG-fromG);
-    const everyday=w.closing-pot;
+    const everyday=w.closing;          // closing already excludes anything marked
     if(pot<worstFund) worstFund=pot;
     if(everyday<worstSpend) worstSpend=everyday;
-    if(n>0){
-      minP=Math.max(minP,(cum-fund0-goal0)/n);
-      maxP=Math.min(maxP,(w.closing-fund0-goal0+cum-floor)/n);
-    }
-    return {w, contrib:cB+cG, wanted:P, capped,
-      bills:{before:bB,in:cB,out:fromB,after:afterB,due:dueB,net:cB-fromB},
-      goals:{before:bG,in:cG,out:fromG,after:afterG,due:dueG,net:cG-fromG},
-      lumpyDue:dueB+dueG, fromPot:fromB+fromG, potBefore:bB+bG, potAfter:pot,
-      shortfall, net:(cB+cG)-(fromB+fromG), spend:everyday, fund:pot, contribs:n};
+    const allHandled = w.outs.length>0 && w.outs.every(o=>o.paid||o.aside>=o.amount-0.01);
+    return {w, contribs:n, allHandled,
+      bills:{before:bB,out:fromB,after:afterB,due:dueB+asideB},
+      goals:{before:bG,out:fromG,after:afterG,due:dueG+asideG},
+      potBefore:bB+bG, potAfter:pot, spend:everyday, fund:pot};
   });
   /* what you can spend THIS week without any later week breaking the floor */
   let tail=Infinity, tailIdx=-1;
@@ -1191,83 +1194,45 @@ function fundPlan(nOverride){
     rows[i].limitedBy=tailIdx;
     rows[i].limitAmount=tail;
   }
-  minP=Math.max(0,minP);
-  const ideal=fund0+P*n-cum;
-  return {rows, P, minP, maxP, fund0, worstFund, worstSpend, ideal,
-    possible:minP<=maxP, auto:autoPark()};
+  return {rows, P:parkAmount(), auto:autoPark(), worstFund, worstSpend,
+    potBills:Math.max(0,+S.fundStart||0), potGoals:Math.max(0,+S.goalStart||0)};
 }
 function viewFundCard(){
   const S=D.settings, f=fundPlan(), manual=S.parkMode==="manual";
   const open=!!D.open.park;
+  const sm2=smoothed(), gw=goalWeekly(), bw=sm2.billsLumpy+sm2.debtMin;
+  const potB=Math.max(0,+S.fundStart||0), potG=Math.max(0,+S.goalStart||0);
+
   let h='<div class="hand" style="border-color:var(--sand)">'
     +'<button class="parkhead" data-parktoggle="1">'
-    +'<span class="lbl">Park each week</span>'
+    +'<span class="lbl">The two pots</span>'
     +'<span class="parkchev">'+(open?"\u25B4":"\u25BE")+'</span></button>'
-    +'<div class="handrow"><span class="cur">$</span>'
-    +(manual
-      ? '<input type="number" inputmode="decimal" data-set="parkAmount" value="'+(+S.parkAmount||0)+'" style="color:var(--sand)">'
-      : '<input type="number" value="'+Math.round(f.auto)+'" disabled style="color:var(--sand)">')
-    +'</div>';
-  if(!open){
-    const gw=goalWeekly(), nowG=Math.min(f.P,gw), nowB=Math.max(0,f.P-gw);
-    return h+'<div class="handnote">'+cash(nowB)+' bills float'
-      +(gw>0?' &middot; '+cash(nowG)+' owed to others':'')
-      +'. Tap the heading for the detail.</div></div>';
-  }
-  h+='<div class="seg" style="margin:6px 0 10px">'
-    +'<button class="'+(manual?"":"on")+'" data-park="auto">Work it out for me</button>'
-    +'<button class="'+(manual?"on":"")+'" data-park="manual">I\'ll set it</button>'
-    +'</div>';
+    +'<div class="potrow"><span class="nm">Bills float</span>'
+    +'<span class="amt sand">'+cash(potB)+'</span></div>'
+    +'<div class="potrow"><span class="nm">Owed to others</span>'
+    +'<span class="amt rose">'+cash(potG)+'</span></div>';
 
-  if(f.possible){
-    const sm2=smoothed(), gw=goalWeekly(), bw=sm2.billsLumpy+sm2.debtMin;
-    const nowG=Math.min(f.P,gw), nowB=Math.max(0,f.P-gw);
-    const short=Math.max(0,bw-nowB);
-    h+='<div class="handnote">'
-      +(Math.abs(f.P-f.auto)<0.5
-        ? '<b>This is the recommended amount</b> — what your bills and goals actually cost. '
-        : '<b>Recommended is '+cash(f.auto)+' a week.</b> ')
-      +'Worth splitting across two accounts so goal money can\'t get spent by accident.</div>'
-      +'<div style="margin:10px 0 4px">'
-      +'<div class="ln"><span class="nm">Bills float — rates, insurance, power</span>'
-      +'<span class="amt sand">'+cash(nowB)+'</span></div>'
-      +(short>0.5?'<div class="ln"><span class="nm dim" style="font-size:12px">'
-        +'&nbsp;&nbsp;'+cash(short)+' under what those bills need</span>'
-        +'<span class="amt dim" style="font-size:12px">('+cash(bw)+')</span></div>':'')
-      +(gw>0?'<div class="ln"><span class="nm">Owed to others — what you are saving for</span>'
-        +'<span class="amt rose">'+cash(nowG)+'</span></div>'
-        +(nowG<gw-0.5?'<div class="ln"><span class="nm rose" style="font-size:12px">'
-          +'&nbsp;&nbsp;'+cash(gw-nowG)+' short — a goal will miss its date</span>'
-          +'<span class="amt rose" style="font-size:12px">('+cash(gw)+')</span></div>':'')
-        :'')
-      +'</div>'
-      +'<div class="seg" style="margin-top:8px">'
-      +'<button data-setpark="'+f.auto.toFixed(2)+'">Use '+cash(f.auto)+'</button>'
-      +'<button data-setpark="'+f.minP.toFixed(2)+'">Bare minimum '+cash(f.minP)+'</button>'
-      +'</div>'
-      +'<div class="handnote" style="margin-top:8px">'
-      +(gw>0?'Trimming always comes out of the bills float first — money owed on a date is '
-        +'funded before anything else. ':'')
-      +'Anything from '+cash(f.minP)+' to '+cash(f.maxP)+' a week is survivable, but going above '
-      +'the recommended figure just locks money away early.</div>';
-  } else {
-    h+='<div class="handnote" style="color:var(--rose)">No amount works right now. The bills '
-      +'need <b>'+cash(f.minP)+'</b> a week but your buffer only allows <b>'+cash(Math.max(0,f.maxP))
-      +'</b>. You\'re short about '+cash(f.minP-f.maxP)+' a week — cut spending, move a bill, '
-      +'or start the pot with more in it.</div>';
-  }
+  if(!open) return h+'<div class="handnote">Tap the heading to see what to move each week.</div></div>';
 
-  h+='<div class="setrow" style="margin-top:10px"><label>Already in the bills float</label>'
-    +'<input type="number" inputmode="decimal" data-set="fundStart" value="'+(+S.fundStart||0)+'"></div>'
-    +(goalWeekly()>0
-      ? '<div class="setrow"><label>Already saved towards goals</label>'
-        +'<input type="number" inputmode="decimal" data-set="goalStart" value="'+(+S.goalStart||0)+'"></div>'
-      : '');
+  h+='<div class="divider"></div>'
+    +'<div class="handnote">Spread over the year, your non-weekly bills cost <b>'+cash(bw)
+    +'</b> a week'+(gw>0?' and your goals need <b>'+cash(gw)+'</b> a week':'')+'.</div>';
 
-  if(f.worstFund<-0.5)
-    h+='<div class="warn">▲ The pot goes '+cash(-f.worstFund)+' short at its worst. '
-      +'Raise the weekly amount or put more in to start.</div>';
+  if(gw>0)
+    h+='<div class="cut" style="margin-top:12px"><div class="item" style="border:0;padding-top:0">'
+      +'<b>Move '+cash(gw)+' a week into the goals account.</b> The tax and anything else with a '
+      +'date can\'t be paid out of one week\'s income when they arrive, so this one matters.</div></div>';
 
+  h+='<div class="handnote" style="margin-top:12px">The bills float is different — if you pay '
+    +'this week\'s bills straight from your everyday account, it doesn\'t need topping up. '
+    +'Build it when there\'s room. Once it holds a few hundred, bills stop landing on you.</div>';
+
+  h+='<div class="setrow" style="margin-top:12px"><label>Bills float holds</label>'
+    +'<input type="number" inputmode="decimal" data-set="fundStart" value="'+potB+'"></div>'
+    +'<div class="setrow"><label>Goals account holds</label>'
+    +'<input type="number" inputmode="decimal" data-set="goalStart" value="'+potG+'"></div>'
+    +'<p class="note">These update themselves when you tap <b>Put aside</b> on a bill. '
+    +'Correct them here if they drift from your bank.</p>';
   return h+'</div>';
 }
 
@@ -1678,7 +1643,7 @@ function briefing(){
   t+="Cash on hand: "+cash(+S.openingCash||0)+"\n";
   t+="Safety floor I never want to go below: "+cash(+S.floor||0)+"\n";
   t+="Already set aside in the pot: "+cash(+S.fundStart||0)+"\n";
-  t+="Currently parking "+cash(F.P)+" a week for non-weekly bills.\n";
+  t+="Suggested weekly set-aside: "+cash(F.auto)+"\n";
   t+="Weeks run "+["Sunday","Monday","","","","Friday","Saturday"][+S.weekStart||1]+" to "
     +["Saturday","Sunday","","","","Thursday","Friday"][+S.weekStart||1]+".\n\n";
   t+="INCOME\n"+(D.incomes.map(line).join("\n")||"none")+"\n\n";
@@ -1692,8 +1657,7 @@ function briefing(){
   });
   t+="\nLowest spendable point across the period: "+cash(F.worstSpend)+"\n";
   t+="Lowest the pot gets: "+cash(F.worstFund)+"\n";
-  t+="Arithmetic safe range for the weekly park amount: "
-    +cash(F.minP)+" to "+(isFinite(F.maxP)?cash(F.maxP):"unbounded")+"\n";
+  t+="Bills float holds "+cash(F.potBills)+", goals account holds "+cash(F.potGoals)+"\n";
   const sp=spendIn("month");
   if(sp.length){
     t+="\nLOGGED SPENDING, LAST 30 DAYS\n";
@@ -2135,6 +2099,43 @@ document.addEventListener("click",e=>{
     } else {
       D.settings.landed[ld.dataset.landed]=false;
     }
+    save(); render(); return;
+  }
+  const mk=e.target.closest("[data-mark]");
+  if(mk){
+    tap();
+    if(!D.settings.marks) D.settings.marks={};
+    const key=mk.dataset.key, mode=mk.dataset.mark, full=Number(mk.dataset.amt)||0;
+    const cur=D.settings.marks[key];
+    const cash0=()=>+D.settings.openingCash||0;
+
+    /* undo whatever was there */
+    if(cur){
+      if(cur.state==="paid") D.settings.openingCash=cash0()+(+cur.amount||0);
+      else {
+        D.settings.openingCash=cash0()+(+cur.amount||0);
+        if(cur.goal) D.settings.goalStart=Math.max(0,(+D.settings.goalStart||0)-(+cur.amount||0));
+        else D.settings.fundStart=Math.max(0,(+D.settings.fundStart||0)-(+cur.amount||0));
+      }
+      delete D.settings.marks[key];
+      if(cur.state===mode){ save(); render(); return; }   // second tap = undo
+    }
+
+    if(mode==="paid"){
+      D.settings.marks[key]={state:"paid",amount:full};
+      D.settings.openingCash=cash0()-full;
+    } else {
+      const isGoal=mk.dataset.goal==="1";
+      const v=prompt("How much did you move across?", full.toFixed(2));
+      const n=Number(v);
+      if(!(n>0)){ save(); render(); return; }
+      const amt=Math.min(n,full);
+      D.settings.marks[key]={state:"aside",amount:amt,goal:isGoal};
+      D.settings.openingCash=cash0()-amt;
+      if(isGoal) D.settings.goalStart=(+D.settings.goalStart||0)+amt;
+      else D.settings.fundStart=(+D.settings.fundStart||0)+amt;
+    }
+    D.settings.cashUpdated=toISO(new Date());
     save(); render(); return;
   }
   if(e.target.closest("[data-parktoggle]")){ tap(); D.open.park=!D.open.park; save(); render(); return; }
