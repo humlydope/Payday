@@ -281,7 +281,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="5.2 Beta";
+const VERSION="5.4 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -622,6 +622,22 @@ function viewPlan(){
             +(x.aside>0?"\u2713 Set aside":"Put aside")+'</button></div>';
       });
       const sm2=smoothed();
+      /* the goals transfer isn't a dated bill, so it needs its own line */
+      const gwk=r2(goalWeekly());
+      if(gwk>0 && !w.part){
+        const gkey="goalpark|"+toISO(w.from);
+        const gm=(D.settings.marks||{})[gkey];
+        const gdone=!!gm;
+        h+='<div class="divider"></div>'
+          +line("Set aside for your goals",null,gwk, gdone?"dim":"rose", gdone?"":"−",
+            gdone?"\u2713 "+cash(gm.amount)+" set aside"+(gm.amount<gwk-0.01?" \u00b7 "+cash(gwk-gm.amount)+" short of the weekly amount":"")
+                 :"\u2192 into the goals account", gdone);
+        if(w.from<=addDays(new Date(),13))
+          h+='<div class="marks"><button class="'+(gdone?"on":"")+'" data-mark="aside" '
+            +'data-key="'+gkey+'" data-amt="'+gwk+'" data-goal="1">'
+            +(gdone?"\u2713 Set aside":"Put aside")+'</button></div>';
+      }
+
       const fr=FP.rows[i]||null;
       if(fr){
         const yours=Math.max(0,fr.spend-(+S.floor));
@@ -629,14 +645,14 @@ function viewPlan(){
         if(fr.allHandled)
           h+='<div class="item" style="border:0;padding:0 0 10px;color:var(--teal)">'
             +'\u2713 Everything due this week is handled.</div>';
-        if(fr.bills.out>0.5||fr.goals.out>0.5||fr.potAfter>0.5){
+        if(fr.bills.out>0.5||fr.goals.out>0.5||fr.potAfter>0.5||goalWeekly()>0){
           h+='<div class="lbl" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;'
             +'color:var(--dim);text-transform:uppercase;margin-bottom:8px">The pots</div>';
           if(fr.bills.before>0.5||fr.bills.out>0.5)
             h+=ln2("Bills float",fr.bills.before)
               +(fr.bills.out>0.5?ln2("  pays out",fr.bills.out,"\u2212"):"")
               +ln2("  left",fr.bills.after,"","sand");
-          if(fr.goals.before>0.5||fr.goals.out>0.5)
+          if(fr.goals.before>0.5||fr.goals.out>0.5||goalWeekly()>0)
             h+=ln2("Goals account",fr.goals.before)
               +(fr.goals.out>0.5?ln2("  pays out",fr.goals.out,"\u2212"):"")
               +ln2("  left",fr.goals.after,"","rose");
