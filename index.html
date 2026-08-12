@@ -281,7 +281,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="5.9 Beta";
+const VERSION="6.0 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -432,7 +432,7 @@ function buildWeeks(nOverride){
       pushOut(it,d,+it.amount||0,{lumpy:it.freq!=="weekly", goal:it.freq==="once"})));
     D.debts.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
       pushOut(Object.assign({},it,{name:it.name+" minimum"}),d,+it.minPayment||0,
-        {debt:1, lumpy:it.freq!=="weekly"})));
+        {debt:1, debtId:it.id, lumpy:it.freq!=="weekly"})));
     const extra=+S.extraDebt||0;
     if(extra>0&&D.debts.length&&!part) outs.push({name:"Extra off debt",amount:extra,date:from,debt:1});
     outs.sort((a,b)=>a.date-b.date);
@@ -622,7 +622,7 @@ function viewPlan(){
         if(x.date<=soon)
           h+='<div class="marks">'
             +'<button class="'+(x.paid?"on":"")+'" data-mark="paid" data-key="'+esc(x.key)
-            +'" data-amt="'+x.amount+'">'+(x.paid?"\u2713 Paid":"Paid")+'</button>'
+            +'" data-amt="'+x.amount+'"'+(x.debtId?' data-debtid="'+esc(x.debtId)+'"':'')+'>'+(x.paid?"\u2713 Paid":"Paid")+'</button>'
             +'<button class="'+(x.aside>0?"on":"")+'" data-mark="aside" data-key="'+esc(x.key)
             +'" data-amt="'+x.amount+'" data-goal="'+(x.goal?1:0)+'">'
             +(x.aside>0?"\u2713 Set aside":"Put aside")+'</button></div>';
@@ -2168,8 +2168,13 @@ document.addEventListener("click",e=>{
     const cur=D.settings.marks[key];
     const cash0=()=>+D.settings.openingCash||0;
 
+    const dId=mk.dataset.debtid||null;
     /* undo whatever was there */
     if(cur){
+      if(cur.debtId){
+        const dd=D.debts.find(x=>x.id===cur.debtId);
+        if(dd) dd.balance=r2((+dd.balance||0)+(+cur.amount||0));
+      }
       if(cur.state==="paid") D.settings.openingCash=r2(cash0()+(+cur.amount||0));
       else {
         D.settings.openingCash=r2(cash0()+(+cur.amount||0));
@@ -2181,8 +2186,12 @@ document.addEventListener("click",e=>{
     }
 
     if(mode==="paid"){
-      D.settings.marks[key]={state:"paid",amount:r2(full)};
+      D.settings.marks[key]={state:"paid",amount:r2(full),debtId:dId||undefined};
       D.settings.openingCash=r2(cash0()-full);
+      if(dId){
+        const dd=D.debts.find(x=>x.id===dId);
+        if(dd) dd.balance=r2(Math.max(0,(+dd.balance||0)-r2(full)));
+      }
     } else {
       const isGoal=mk.dataset.goal==="1";
       const v=prompt("How much did you move across?", full.toFixed(2));
