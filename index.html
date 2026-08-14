@@ -281,7 +281,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="6.0 Beta";
+const VERSION="6.1 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -853,13 +853,15 @@ function goalSchedule(amount, dueISO){
   const reachable=Math.max(0,Math.min(capacity,cap[n-1]));
   const feasible=reachable>=amount-0.5;
 
-  /* share the target across weeks in proportion to that capacity, never
-     letting the running total exceed what the account can actually hold back */
+  /* Plan for the target if it fits, otherwise for the most that does.
+     A partial plan beats no plan: saving something from today always beats
+     waiting until the sums work, because waiting shortens the runway. */
+  const target = feasible ? amount : reachable;
   const c=new Array(n).fill(0);
   if(capacity>0){
     let carry=0, run=0;
     for(let j=0;j<n;j++){
-      let want=amount*(inc[j]/capacity)+carry;
+      let want=target*(inc[j]/capacity)+carry;
       const room=Math.max(0,cap[j]-run);
       const put=Math.min(want,room);
       carry=want-put; run+=put; c[j]=put;
@@ -890,7 +892,7 @@ function goalSchedule(amount, dueISO){
   });
   /* rounding must never undershoot — the last phase carries the remainder */
   const scheduled=phases.reduce((a,p)=>a+p.perWeek*p.weeks,0);
-  if(phases.length && scheduled<amount){
+  if(phases.length && feasible && scheduled<amount){
     const lastP=phases[phases.length-1];
     lastP.perWeek=Math.ceil(((amount-(scheduled-lastP.perWeek*lastP.weeks))/lastP.weeks)/5)*5;
   }
@@ -971,7 +973,11 @@ function goalSchedule(amount, dueISO){
     }
   }
   const flat=amount/totalWeeks;
-  return {phases, feasible, reachable, amount, due, totalWeeks, flat,
+  const planned=phases.reduce((a,p)=>a+p.perWeek*p.weeks,0);
+  const gap=Math.max(0,amount-planned);
+  /* what waiting costs: same shortfall, fewer weeks to cover it */
+  const delayCost=totalWeeks>4 ? r2(amount/(totalWeeks-4) - amount/totalWeeks) : 0;
+  return {phases, feasible, reachable, planned, gap, delayCost, amount, due, totalWeeks, flat,
     dips:dips.length, firstDip, firstDipShort, startWeek,
     neverRecovers:!startWeek,
     shortPerWeek:Math.max(0,(amount-reachable)/totalWeeks), sp, tooSoon:false};
@@ -1045,19 +1051,30 @@ function viewFit(){
             +'<div class="item">Lower your floor if it is set higher than it needs to be.</div>'
             +'<div class="item">For a tax bill, ask IRD about an instalment arrangement rather '
             +'than trying to save what is not there.</div></div>';
-        } else if(G.feasible && G.phases.length){
+        } else if(G.phases.length){
           const p0=G.phases[0], p1=G.phases[1];
-          h+='<div class="result" style="margin-top:12px">'
+          h+='<div class="result'+(G.feasible?'':' bad')+'" style="margin-top:12px">'
             +'<span class="big">'+cash(p0.perWeek)+' a week</span>'
             +'Start now'+(p1?', then it steps up to <b>'+cash(p1.perWeek)+'</b> from '
               +lDate(p1.from):' and hold it')+'. '
-            +cash(G.amount)+' is covered by '+lDate(G.due)+'.</div>';
+            +(G.feasible
+              ? cash(G.amount)+' is covered by '+lDate(G.due)+'.'
+              : 'That reaches <b>'+cash(G.planned)+'</b> of '+cash(G.amount)+' by '
+                +lDate(G.due)+' \u2014 still <b>'+cash(G.gap)+'</b> short.')
+            +'</div>';
+          if(!G.feasible)
+            h+='<div class="cut" style="margin-top:10px;border:1px solid var(--sand)">'
+              +'<div class="item" style="border:0;padding-top:0"><b style="color:var(--sand)">'
+              +'Start anyway.</b> Saving '+cash(G.planned)+' beats saving nothing, and every '
+              +'week you wait makes the rest harder \u2014 hold off a month and the weekly figure '
+              +'climbs by about '+cash(G.delayCost)+'. Put this in now, then close the gap by '
+              +'trimming spending or moving the date. The plan updates itself when you do.</div></div>';
           if(G.phases.length>1){
             h+='<details class="setup" style="margin-top:10px"><summary>The whole schedule ('
               +G.phases.length+' steps)</summary>';
             G.phases.forEach((p,i)=>{
               h+='<div class="setrow"><label>'+(i===0?"From now":"From "+lDate(p.from))
-                +' · '+p.weeks+' weeks</label>'
+                +' \u00b7 '+p.weeks+' weeks</label>'
                 +'<span style="font-family:var(--mono);color:var(--sand)">'+cash(p.perWeek)+'/wk</span></div>';
             });
             h+='<p class="note" style="padding-bottom:12px">Set one standing order and change it '
@@ -1065,23 +1082,20 @@ function viewFit(){
           }
           h+='<button class="btn save" data-fitsave="1" style="width:100%;margin-top:12px">'
             +'Add this to my plan</button>'
-            +'<p class="note">Adds the payment on '+sDate(G.due)+' and sets your park amount to '
-            +cash(p0.perWeek)+' plus what your other bills need. The app will remind you when '
-            +'it is time to step up.</p>';
+            +'<p class="note">Adds the payment on '+sDate(G.due)+' and sets your weekly set-aside '
+            +'to '+cash(p0.perWeek)+' plus what your other bills need.'
+            +(G.feasible?' The app will remind you when it is time to step up.'
+                        :' Come back and re-run this once your spending settles \u2014 it will '
+                         +'raise the amount if you can afford more.')+'</p>';
         } else {
           h+='<div class="result bad" style="margin-top:12px">'
-            +'<span class="big">It does not fit</span>'
-            +'Saving everything you can spare still only reaches <b>'+cash(G.reachable)
-            +'</b> by '+lDate(G.due)+'. You are about <b>'+cash(G.shortPerWeek)
-            +' a week short</b>.</div>'
+            +'<span class="big">Nothing spare to save</span>'
+            +'There is no week between now and '+lDate(G.due)+' with room above your floor.</div>'
             +'<div class="cut" style="margin-top:10px"><h4>Real options</h4>'
-            +'<div class="item">Trim '+cash(G.shortPerWeek)+' a week from spending — check the '
-            +'Spending tab for where.</div>'
+            +'<div class="item">Trim spending \u2014 the Spending tab shows where it goes.</div>'
             +'<div class="item">Push the date out, if it can move.</div>'
             +'<div class="item">Ask about paying it in instalments. For a tax bill, IRD '
-            +'arrangements exist for exactly this.</div>'
-            +'<div class="item">Borrow the gap and plan the repayment here as a new bill. '
-            +'Better decided now than the week it is due.</div></div>';
+            +'arrangements exist for exactly this.</div></div>';
         }
       }
     }
@@ -2290,7 +2304,7 @@ document.addEventListener("click",e=>{
     const amt=Number(F.amount)||0, by=parseISO(F.by);
     if(amt<=0||!by) return;
     const G=goalSchedule(amt,F.by);
-    if(!G||G.tooSoon||!G.feasible||!G.phases.length) return;
+    if(!G||G.tooSoon||!G.phases.length) return;
     const id=uid();
     D.bills.push({id:id, name:(F.name||"Saved-for payment").trim(),
       amount:amt, freq:"once", anchor:F.by,
