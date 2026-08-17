@@ -281,7 +281,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="6.1 Beta";
+const VERSION="6.3 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -403,18 +403,22 @@ function buildWeeks(nOverride){
   const NW=nOverride||S.weeks;
   for(let i=0;i<NW;i++) spans.push([addDays(firstStart,i*7),addDays(firstStart,(i+1)*7),false]);
   spans.forEach(sp=>{
-    const from=sp[0], to=sp[1], part=sp[2], ins=[], outs=[];
+    const from=sp[0], to=sp[1], part=sp[2], w_part=sp[2], ins=[], outs=[];
     /* income dated on or before your last balance update is already in that
        balance — counting it again would double it */
     const tnow=new Date(); const tday=new Date(tnow.getFullYear(),tnow.getMonth(),tnow.getDate());
-    D.incomes.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>{
+    /* In the part-week, also look back over the days already gone this week.
+       A payment due Monday that only turned up Thursday still needs a line to
+       tap, and it stays out of the totals so nothing is counted twice. */
+    const scanFrom = w_part ? addDays(from,-7) : from;
+    D.incomes.forEach(it=>occurrences(it.anchor,it.freq,scanFrom,to).forEach(d=>{
       const key=it.id+"|"+toISO(d);
       const marked=(D.settings.landed||{})[key];
-      const isToday=d.getTime()===tday.getTime();
       const past=d<tday;
-      const rec=(D.settings.arrived||{})[key];          // what actually landed
+      const earlier=d<from;                              // before this card starts
+      const rec=(D.settings.arrived||{})[key];           // what actually landed
       const amt=rec!==undefined ? r2(rec) : (+it.amount||0);
-      ins.push({name:it.name, amount:amt, expected:+it.amount||0, date:d, key,
+      ins.push({name:it.name, amount:amt, expected:+it.amount||0, date:d, key, earlier,
         arrived: rec!==undefined,
         markable: d<=addDays(tday,13),
         banked: rec!==undefined ? true : (marked!==undefined ? !!marked : past)});
@@ -422,22 +426,23 @@ function buildWeeks(nOverride){
     const MK=D.settings.marks||{};
     const pushOut=(it,d,amt,extra)=>{
       const key=it.id+"|"+toISO(d);
+      const overdue = d<from;
       const m=MK[key]||null;
       const aside=(m&&m.state==="aside")?Math.min(amt,+m.amount||0):0;
       const paid=(m&&m.state==="paid");
-      outs.push(Object.assign({name:it.name,amount:amt,date:d,key,mark:m,
+      outs.push(Object.assign({name:it.name,amount:amt,date:d,key,mark:m,overdue,
         aside, paid, remaining: paid?0:Math.max(0,amt-aside)},extra||{}));
     };
-    D.bills.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
+    D.bills.forEach(it=>occurrences(it.anchor,it.freq,scanFrom,to).forEach(d=>
       pushOut(it,d,+it.amount||0,{lumpy:it.freq!=="weekly", goal:it.freq==="once"})));
-    D.debts.forEach(it=>occurrences(it.anchor,it.freq,from,to).forEach(d=>
+    D.debts.forEach(it=>occurrences(it.anchor,it.freq,scanFrom,to).forEach(d=>
       pushOut(Object.assign({},it,{name:it.name+" minimum"}),d,+it.minPayment||0,
         {debt:1, debtId:it.id, lumpy:it.freq!=="weekly"})));
     const extra=+S.extraDebt||0;
     if(extra>0&&D.debts.length&&!part) outs.push({name:"Extra off debt",amount:extra,date:from,debt:1});
     outs.sort((a,b)=>a.date-b.date);
     const totalIn=ins.reduce((a,b)=>a+(b.banked?0:b.amount),0),
-          totalOut=outs.reduce((a,b)=>a+b.remaining,0);
+          totalOut=outs.reduce((a,b)=>a+b.remaining,0);   // overdue lines included: still owed
     const opening=carry, closing=opening+totalIn-totalOut; carry=closing;
     rows.push({from,to,part,ins,outs,totalIn,totalOut,opening,closing,pay:ins.length>1});
   });
@@ -598,7 +603,8 @@ function viewPlan(){
           src="\u2713 "+cash(x.amount)+" arrived"
             +(diff>0.01?" \u00b7 "+cash(diff)+" more than expected"
              :diff<-0.01?" \u00b7 "+cash(-diff)+" less than expected":"");
-        } else src = x.banked ? "\u2713 already in your balance" : "\u2192 into everyday";
+        } else if(x.earlier) src="\u2192 was due "+sDate(x.date)+" \u00b7 tap if it has landed";
+        else src = x.banked ? "\u2713 already in your balance" : "\u2192 into everyday";
         h+=line(x.name,x.date,x.amount, x.banked?"dim":"teal", x.banked?"":"+", src, x.banked);
         if(x.markable)
           h+='<div class="marks">'
@@ -616,6 +622,7 @@ function viewPlan(){
         if(x.paid) src="\u2713 paid";
         else if(x.aside>=x.amount-0.01) src="\u2713 set aside, waiting for the due date";
         else if(x.aside>0) src="\u2713 "+cash(x.aside)+" set aside \u00b7 "+cash(x.remaining)+" still to pay";
+        else if(x.overdue) src="\u25b2 was due "+sDate(x.date)+" \u00b7 still to pay";
         else src = x.lumpy ? (x.goal?"\u2190 goals pot, then everyday":"\u2190 bills pot, then everyday")
                            : "\u2190 from everyday";
         h+=line(x.name,x.date,x.amount, done?"dim":(x.debt?"sand":""), done?"":"−", src, done);
