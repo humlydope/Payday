@@ -281,7 +281,7 @@
 <div class="sheet" id="sheet"></div>
 
 <script>
-const VERSION="6.3 Beta";
+const VERSION="6.4 Beta";
 /* ── storage: works inside Claude and as a hosted app ── */
 const store = {
   async get(k){
@@ -409,8 +409,8 @@ function buildWeeks(nOverride){
     const tnow=new Date(); const tday=new Date(tnow.getFullYear(),tnow.getMonth(),tnow.getDate());
     /* In the part-week, also look back over the days already gone this week.
        A payment due Monday that only turned up Thursday still needs a line to
-       tap, and it stays out of the totals so nothing is counted twice. */
-    const scanFrom = w_part ? addDays(from,-7) : from;
+       tap. It reaches back to this week's start, never into last week. */
+    const scanFrom = w_part ? addDays(firstStart,-7) : from;   // back to this Monday only
     D.incomes.forEach(it=>occurrences(it.anchor,it.freq,scanFrom,to).forEach(d=>{
       const key=it.id+"|"+toISO(d);
       const marked=(D.settings.landed||{})[key];
